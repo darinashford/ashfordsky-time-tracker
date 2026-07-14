@@ -257,6 +257,53 @@ export function HowItWorks({
         Manual work always wins over the machine, and everything the machine did — every vote, every reason — is
         auditable on this page via each block’s “why”.
       </p>
+
+      <h2>9 · What the Today numbers mean</h2>
+      <p className="small">
+        The tiles at the top of <strong>Today</strong> read left-to-right, from “everything” to “the part that
+        bills”:
+      </p>
+      <ul className="small" style={{ marginTop: 4, lineHeight: 1.7 }}>
+        <li>
+          <strong>Total on computer</strong> — Active time plus counted idle. A locked screen is excluded, so
+          this is time you were actually at the machine.
+        </li>
+        <li>
+          <strong>Active</strong> — time you were driving the machine, with idle removed.
+        </li>
+        <li>
+          <strong>Billable</strong> — the client work currently counted as billable: the <strong>Confident</strong>{' '}
+          and <strong>Likely</strong> slices. Uncertain time is <em>not</em> included until you review it, and
+          non-billable never is.
+        </li>
+        <li>
+          <strong>Confident</strong> — the share of your Active time that landed on a strong, direct signal (or
+          that you confirmed): auto-billed, no action needed.
+        </li>
+        <li>
+          <strong>Uncertain</strong> — client time on a weak or conflicting signal, held out of billing until you
+          decide.
+        </li>
+      </ul>
+      <p className="small">
+        The <strong>Coverage / accuracy</strong> bar splits that same Active time into statuses by share:{' '}
+        <strong>confident</strong> (auto-finalized) + <strong>confirmed</strong> (by you) are the trustworthy
+        core; <strong>likely</strong> are suggestions; <strong>uncertain</strong> needs review;{' '}
+        <strong>non-billable</strong> is bucketed; <strong>unknown</strong> has no attribution yet.{' '}
+        <strong>Screenshot-supported</strong> is listed separately — the slice whose attribution had an on-screen
+        screenshot (OCR) behind it.
+      </p>
+
+      <h2>10 · Privacy &amp; where your data lives</h2>
+      <p className="small">
+        Activity is recorded <strong>locally</strong> by ActivityWatch on each person’s own machine. Screenshots
+        (when on) <strong>never leave that machine</strong> — they’re stored locally, read for text on-device, and
+        deleted after {screenshotRetentionDays} days. What syncs to the firm database (Supabase) is the
+        attribution data — app / window title / URL, timings, and the chosen client — <em>not</em> the
+        screenshots. Teammates’ machines have <strong>no database access</strong>: they send their time through a
+        personal token and the server stamps whose it is; only the owner’s machine writes directly. Revoking a
+        token stops new time immediately, without deleting anything already recorded.
+      </p>
     </div>
   );
 }
