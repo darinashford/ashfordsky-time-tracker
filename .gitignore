@@ -1,0 +1,27 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# env / secrets (NEVER commit real keys)
+.env
+.env.local
+.env.*.local
+
+# build output
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# tests
+coverage/
+
+# local runtime data: screenshots, generated fixtures, logs
+.data/
+*.log
+
+# editor / os
+.DS_Store
+Thumbs.db
+.idea/

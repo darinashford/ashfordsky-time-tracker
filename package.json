@@ -1,0 +1,30 @@
+{
+  "name": "ashfordsky-time-tracker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first client time attribution for a CPA firm: sensors -> intervals -> deterministic resolvers -> review dashboard, backed by an existing Supabase client graph.",
+  "packageManager": "pnpm@9.12.3",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "seed": "pnpm --filter @tt/db run seed",
+    "db:types": "pnpm --filter @tt/db run gen-types",
+    "ingest": "pnpm --filter @tt/activitywatch-ingestor run start",
+    "resolve": "pnpm --filter @tt/resolver-service run start",
+    "inspect": "pnpm --filter @tt/resolver-service run inspect",
+    "screenshots": "pnpm --filter @tt/screenshot-sidecar run start",
+    "pipeline": "pnpm run ingest && pnpm run resolve",
+    "sync": "tsx services/activitywatch-ingestor/src/index.ts && tsx services/resolver-service/src/index.ts",
+    "sync:catchup": "tsx services/activitywatch-ingestor/src/index.ts --days 7 && tsx services/resolver-service/src/index.ts --days 7",
+    "dashboard": "pnpm --filter @tt/dashboard run dev"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.2",
+    "vitest": "^2.1.1"
+  }
+}
