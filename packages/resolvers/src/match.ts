@@ -75,6 +75,10 @@ export interface NameMatch {
   score: number;
   matchedTokens: number;
   phrase: boolean;
+  /** Which name-index entry won for this client: the client's own primary name,
+   *  or a secondary alias (entity/person). Used to break ties — a client's own
+   *  name outranks another client's alias carrying the same text. */
+  kind: 'client_name' | 'entity_name' | 'person_name';
 }
 
 /**
@@ -98,7 +102,7 @@ export function matchClientsByText(text: string | null | undefined, graph: Clien
     score = Math.min(score, 0.9);
     const cur = best.get(e.clientId);
     if (!cur || score > cur.score) {
-      best.set(e.clientId, { clientId: e.clientId, score, matchedTokens: e.tokens.length, phrase });
+      best.set(e.clientId, { clientId: e.clientId, score, matchedTokens: e.tokens.length, phrase, kind: e.kind });
     }
   }
   return [...best.values()].sort(
@@ -171,8 +175,24 @@ export function nameMatchResult(
   isBillable?: boolean,
 ): ResolverResult | null {
   if (matches.length === 0) return null;
-  const top = matches[0]!;
-  const tie = matches.find((m, i) => i > 0 && m.clientId !== top.clientId && m.score >= top.score - 0.03);
+  let top = matches[0]!;
+  // A client's OWN primary name outranks another client's alias carrying the same
+  // text. The roster sync scatters sibling entity-names across a group (one
+  // client's name also lands on several unrelated clients as an alias), which
+  // would otherwise read as ambiguous and drop real client work to needs-review.
+  // If a primary-name match is within reach of the top score, promote it.
+  const primary = matches.find((m) => m.kind === 'client_name');
+  if (primary && top.kind !== 'client_name' && primary.score >= top.score - 0.06) {
+    top = primary;
+  }
+  // Ambiguous only if a DIFFERENT client ties at the same authority: an alias on
+  // another client does not make a primary-name match ambiguous.
+  const tie = matches.find(
+    (m) =>
+      m.clientId !== top.clientId &&
+      m.score >= top.score - 0.03 &&
+      !(top.kind === 'client_name' && m.kind !== 'client_name'),
+  );
   const ids = tie ? [top.clientId, tie.clientId] : [top.clientId];
   return buildResult(ids, graph, confidence, resolverType, evidence, isBillable);
 }

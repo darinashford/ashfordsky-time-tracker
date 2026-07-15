@@ -150,6 +150,35 @@ describe('qbo resolver', () => {
   });
 });
 
+describe("a client's own name beats another client's alias (no false ambiguity)", () => {
+  it('attributes an Excel workbook to the named client, not needs_review', () => {
+    const g = emptyGraph();
+    // The roster sync scatters sibling entity-names across a group: a name that is
+    // one client's real name also lands as an alias on unrelated siblings.
+    addClient(g, 'mbs', 'Zephyr Wellness LLC');
+    addName(g, 'mhc', 'Zephyr Wellness LLC', 'entity_name'); // alias on a sibling
+    addName(g, 'rel', 'Zephyr Wellness LLC', 'entity_name'); // alias on another
+    const { resolution } = runResolvers(
+      interval({ app: 'EXCEL.EXE', windowTitle: '2025 Return Workbook - Zephyr Wellness - Excel' }),
+      ctx(g),
+    );
+    expect(resolution.clientId).toBe('mbs'); // the client whose own name it is
+    expect(resolution.needsReview).toBe(false); // not flagged ambiguous
+    expect(resolution.status).toBe('suggested');
+  });
+
+  it('still flags genuine ambiguity between two real client names', () => {
+    const g = emptyGraph();
+    addClient(g, 'a', 'Summit Partners LLC');
+    addClient(g, 'b', 'Summit Partners Inc'); // two distinct real clients, same core name
+    const { resolution } = runResolvers(
+      interval({ app: 'EXCEL.EXE', windowTitle: 'Summit Partners 2025 - Excel' }),
+      ctx(g),
+    );
+    expect(resolution.needsReview).toBe(true);
+  });
+});
+
 describe('screenshot OCR resolver', () => {
   it('attributes by a sender domain read from the screenshot', () => {
     const g = emptyGraph();
