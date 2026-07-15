@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { localDate, secondsToHours } from '@tt/shared';
-import { getHosts, getRangeClientSummary } from '@tt/db';
+import { getHosts, getRangeActiveSeconds, getRangeClientSummary, getRangeIdleSeconds } from '@tt/db';
 import { getDb } from '../../../../lib/db';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -221,7 +221,12 @@ export default async function RangePage({
 
   let body: ReactNode;
   try {
-    const rows = await getRangeClientSummary(pool, schema, range.start, range.end, fHost);
+    const [rows, activeSeconds, idleSeconds] = await Promise.all([
+      getRangeClientSummary(pool, schema, range.start, range.end, fHost),
+      getRangeActiveSeconds(pool, schema, range.start, range.end, fHost),
+      getRangeIdleSeconds(pool, schema, range.start, range.end, cfg.timezone, cfg.awayCutoffSeconds, fHost),
+    ]);
+    const totalOnComputer = activeSeconds + idleSeconds;
     const nullRow = rows.find((r) => !r.clientId);
     const clients = rows.filter((r) => r.clientId).sort((a, b) => b.totalSeconds - a.totalSeconds);
 
@@ -239,8 +244,12 @@ export default async function RangePage({
       <>
         <div className="cards">
           <div className="card">
-            <div className="k">Total tracked</div>
-            <div className="v">{hrs(grand)}</div>
+            <div className="k">Total on computer</div>
+            <div className="v">{hrs(totalOnComputer)}</div>
+          </div>
+          <div className="card">
+            <div className="k">Active</div>
+            <div className="v">{hrs(activeSeconds)}</div>
           </div>
           <div className="card">
             <div className="k">Billable</div>

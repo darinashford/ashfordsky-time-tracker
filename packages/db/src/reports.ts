@@ -317,6 +317,69 @@ export async function getIdleBreakdown(
   return res.rows as IdleBucket[];
 }
 
+/** Active (non-AFK) seconds summed across a date range, for the Reporting cards. */
+export async function getRangeActiveSeconds(
+  pool: pg.Pool,
+  schema: string,
+  start: string,
+  end: string,
+  host?: string | null,
+): Promise<number> {
+  const s = validIdent(schema);
+  const res = await pool.query(
+    `select coalesce(sum(active_seconds),0)::float as seconds
+       from ${s}.coverage_report
+      where day between $1::date and $2::date and ($3::text is null or hostname = $3)`,
+    [start, end, host ?? null],
+  );
+  return Number((res.rows[0] as { seconds: number } | undefined)?.seconds ?? 0);
+}
+
+/** Counted (short) idle seconds across a date range. Uses the same per-day
+ *  away-cutoff logic as getIdleBreakdown — run detection is partitioned by
+ *  (host, day) so an AFK run never merges across midnight or across people —
+ *  so summing days here ties to the day view's idle totals. Locked-screen
+ *  time is excluded, matching Total-on-computer on Today. */
+export async function getRangeIdleSeconds(
+  pool: pg.Pool,
+  schema: string,
+  start: string,
+  end: string,
+  tz: string,
+  awayCutoffSeconds = 1800,
+  host?: string | null,
+): Promise<number> {
+  const s = validIdent(schema);
+  const res = await pool.query(
+    `with afk as (
+        select duration_seconds, hostname, start_ts,
+               (start_ts at time zone $3)::date as d,
+               lag(end_ts) over (partition by hostname, (start_ts at time zone $3)::date order by start_ts) as prev_end
+          from ${s}.intervals
+         where is_afk = true
+           and lower(coalesce(app,'')) not like '%lockapp%'
+           and (start_ts at time zone $3)::date between $1::date and $2::date
+           and ($5::text is null or hostname = $5)
+     ),
+     marked as (
+        select *, case when prev_end is null or start_ts - prev_end > interval '120 seconds'
+                       then 1 else 0 end as new_run
+          from afk
+     ),
+     runs as (
+        select *, sum(new_run) over (partition by hostname, d order by start_ts rows unbounded preceding) as run_id
+          from marked
+     ),
+     run_tot as (select hostname, d, run_id, sum(duration_seconds) as run_seconds from runs group by hostname, d, run_id)
+     select coalesce(sum(r.duration_seconds),0)::float as seconds
+       from runs r
+       join run_tot t on t.hostname = r.hostname and t.d = r.d and t.run_id = r.run_id
+      where t.run_seconds <= $4`,
+    [start, end, tz, awayCutoffSeconds, host ?? null],
+  );
+  return Number((res.rows[0] as { seconds: number } | undefined)?.seconds ?? 0);
+}
+
 /** Top apps/domains/titles still unresolved — drives the "what to map next" list. */
 export async function getTopUnresolved(
   pool: pg.Pool,
