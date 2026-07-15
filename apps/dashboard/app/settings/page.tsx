@@ -5,7 +5,6 @@ import { getDb, listPeople, type PersonRow } from '../../lib/db';
 import { revokeTokenAction, rotateTokenAction } from '../../lib/actions';
 import { getViewerScope } from '../../lib/viewer';
 import { MintToken } from '../../components/MintToken';
-import { HowItWorks } from '../../components/RawHelp';
 
 export const dynamic = 'force-dynamic';
 
@@ -176,21 +175,6 @@ export default async function SettingsPage() {
         <h1>Settings</h1>
       </div>
       {body}
-      <h2 style={{ marginTop: 28 }}>How this works</h2>
-      <p className="small muted" style={{ maxWidth: 780, marginTop: 0 }}>
-        The whole pipeline, end to end — how time is captured and refreshed, how each block is matched to a
-        client, how confidence becomes a billing status, and how idle time and calls are handled. (This same
-        explainer is also on the Raw Data tab, so teammates can see it too.)
-      </p>
-      <HowItWorks
-        autoFinalizeThreshold={cfg.autoFinalizeThreshold}
-        reviewThreshold={cfg.reviewThreshold}
-        awayCutoffSeconds={cfg.awayCutoffSeconds}
-        screenshotsEnabled={cfg.screenshotsEnabled}
-        screenshotStableSeconds={cfg.screenshotStableSeconds}
-        screenshotRetentionDays={cfg.screenshotRetentionDays}
-        llmEnabled={cfg.llmEnabled}
-      />
     </>
   );
 }

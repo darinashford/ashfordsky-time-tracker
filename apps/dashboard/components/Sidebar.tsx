@@ -11,6 +11,7 @@ const NAV = [
   { href: '/range/week/today', prefix: '/range', ico: '📊', label: 'Reporting' },
   { href: '/raw/today', prefix: '/raw', ico: '🗂️', label: 'Raw Data' },
   { href: '/settings', prefix: '/settings', ico: '⚙️', label: 'Settings' },
+  { href: '/how', prefix: '/how', ico: '❓', label: 'How this works' },
 ];
 
 export function Sidebar({ showSettings = true }: { showSettings?: boolean }) {
