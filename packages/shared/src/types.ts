@@ -272,7 +272,7 @@ export interface ScreenshotPolicy {
   minStableSeconds: number;
   captureIntervalSeconds: number;
   retentionDays: number;
-  appliesScope: 'low_confidence' | 'app' | 'domain' | 'title' | 'all';
+  appliesScope: 'low_confidence' | 'email_low_conf' | 'app' | 'domain' | 'title' | 'all';
   appliesPattern?: string | null;
 }
 

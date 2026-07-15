@@ -4,6 +4,7 @@ import {
   type Interval,
   type ResolverResult,
   type ResolverType,
+  canonicalName,
   extractEmails,
   normalizeText,
   parseHost,
@@ -88,13 +89,15 @@ export interface NameMatch {
 export function matchClientsByText(text: string | null | undefined, graph: ClientGraph): NameMatch[] {
   const norm = normalizeText(text);
   if (!norm) return [];
-  const hay = new Set(norm.split(' ').filter(Boolean));
+  // Canonicalize given-name nicknames on both sides so "William" matches a
+  // "Bill" client (and vice versa); surname/other tokens must still line up.
+  const hay = new Set(norm.split(' ').filter(Boolean).map(canonicalName));
   const best = new Map<string, NameMatch>();
   for (const e of graph.names) {
     if (!e.tokens.length) continue;
     const distinctive = e.tokens.length >= 2 || (e.tokens[0]?.length ?? 0) >= 5;
     if (!distinctive) continue;
-    if (!tokensSubset(e.tokens, hay)) continue;
+    if (!tokensSubset(e.tokens.map(canonicalName), hay)) continue;
     const phrase = e.norm.length >= 4 && norm.includes(e.norm);
     let score = e.tokens.length >= 3 ? 0.8 : e.tokens.length === 2 ? 0.74 : 0.62;
     if (phrase) score += 0.08;

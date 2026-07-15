@@ -1,4 +1,4 @@
-import type { Resolution, ScreenshotPolicy } from '@tt/shared';
+import { type Resolution, type ScreenshotPolicy, isEmailContext } from '@tt/shared';
 import type { Signals } from '@tt/resolvers';
 
 export interface ScreenshotDecision {
@@ -26,6 +26,13 @@ export function decideScreenshot(
     switch (p.appliesScope) {
       case 'low_confidence':
         if (resolution.confidence >= p.onlyBelowConfidence) continue;
+        break;
+      case 'email_low_conf':
+        // An email window (Missive/Outlook/Gmail) that did NOT confidently land
+        // on a client — capture it so OCR can read the sender/body and attribute
+        // the client even when the window title was truncated to a bare surname.
+        if (resolution.confidence >= p.onlyBelowConfidence) continue;
+        if (!isEmailContext(s.app, s.url)) continue;
         break;
       case 'app':
         if (!pat || !s.appNorm.includes(pat)) continue;

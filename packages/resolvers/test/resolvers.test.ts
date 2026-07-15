@@ -167,6 +167,16 @@ describe("a client's own name beats another client's alias (no false ambiguity)"
     expect(resolution.status).toBe('suggested');
   });
 
+  it('matches a formal first name to a nickname client (William -> Bill)', () => {
+    const g = emptyGraph();
+    addClient(g, 'g', 'Bill and Rachel Thornbury');
+    const { resolution } = runResolvers(
+      interval({ app: 'EXCEL.EXE', windowTitle: '2025 Individual Income Summary - William and Rachel Thornbury - Excel' }),
+      ctx(g),
+    );
+    expect(resolution.clientId).toBe('g');
+  });
+
   it('still flags genuine ambiguity between two real client names', () => {
     const g = emptyGraph();
     addClient(g, 'a', 'Summit Partners LLC');

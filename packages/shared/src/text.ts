@@ -121,6 +121,53 @@ export function tokensSubset(needle: string[], haystackTokens: Set<string>): boo
   return needle.every((t) => haystackTokens.has(t));
 }
 
+// Common given-name nicknames -> a canonical form, so a "William … Smith"
+// window matches a "Bill … Smith" client (and vice versa). Both the nickname
+// and the formal name collapse to the same key; a plain name (not in the map)
+// is returned unchanged. Surname/other tokens still have to match, so this only
+// unifies people, never merges two different clients.
+const NICKNAMES: Record<string, string> = {
+  bill: 'william', billy: 'william', will: 'william', willy: 'william',
+  mike: 'michael', mikey: 'michael', mick: 'michael',
+  bob: 'robert', bobby: 'robert', rob: 'robert', robbie: 'robert',
+  jim: 'james', jimmy: 'james', jamie: 'james',
+  tom: 'thomas', tommy: 'thomas',
+  dave: 'david', davey: 'david',
+  dan: 'daniel', danny: 'daniel',
+  joe: 'joseph', joey: 'joseph',
+  chris: 'christopher',
+  matt: 'matthew', matty: 'matthew',
+  nick: 'nicholas', nicky: 'nicholas',
+  tony: 'anthony',
+  andy: 'andrew',
+  ben: 'benjamin', benji: 'benjamin', benny: 'benjamin',
+  sam: 'samuel', sammy: 'samuel',
+  alex: 'alexander',
+  eddie: 'edward',
+  ron: 'ronald', ronnie: 'ronald',
+  don: 'donald', donnie: 'donald',
+  steve: 'steven', stevie: 'steven',
+  ken: 'kenneth', kenny: 'kenneth',
+  greg: 'gregory',
+  jeff: 'jeffrey',
+  rick: 'richard', ricky: 'richard', rich: 'richard', richie: 'richard',
+  fred: 'frederick', freddie: 'frederick',
+  charlie: 'charles', chuck: 'charles',
+  kate: 'katherine', katie: 'katherine', kathy: 'katherine',
+  liz: 'elizabeth', lizzie: 'elizabeth', beth: 'elizabeth', betsy: 'elizabeth',
+  sue: 'susan', susie: 'susan',
+  jen: 'jennifer', jenny: 'jennifer',
+  becky: 'rebecca',
+  maggie: 'margaret', peggy: 'margaret',
+  cathy: 'catherine',
+};
+
+/** Canonicalize a single name token through the nickname map (unchanged if not a
+ *  known nickname). Used by name matching so nicknames and formal names unify. */
+export function canonicalName(token: string): string {
+  return NICKNAMES[token] ?? token;
+}
+
 /** Normalize an email subject: strip repeated Re:/Fwd: prefixes, then normalize. */
 export function normalizeSubject(s: string | null | undefined): string {
   let t = (s ?? '').trim();

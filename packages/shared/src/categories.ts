@@ -127,10 +127,14 @@ const BUCKETS: BucketDef[] = [
     titles: ['vacation'],
   },
   {
-    // The firm's own internal software/AI platforms (not a client's books).
+    // The firm's own internal software/AI platforms + the infra used to build
+    // them (Supabase/Railway host this time tracker) — never a client's books.
     key: 'firm_tooling',
     tier: 'hard',
-    hosts: ['brain.ashfordsky.com', 'time.ashfordsky.com', 'notes.ashfordsky.com'],
+    hosts: [
+      'brain.ashfordsky.com', 'time.ashfordsky.com', 'notes.ashfordsky.com',
+      'supabase.com', 'supabase.io', 'railway.com', 'railway.app',
+    ],
     titles: ['ashford agentos', 'quickbooks connector'],
   },
   {
