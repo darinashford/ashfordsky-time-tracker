@@ -7,6 +7,7 @@ import {
   getCoverage,
   getDailyClientSummary,
   getDataFreshness,
+  getDayTimeline,
   getHosts,
   getIdleBreakdown,
 } from '@tt/db';
@@ -14,6 +15,7 @@ import { getDb, listClientOptions, listManualEntries } from '../../../lib/db';
 import { getViewerScope } from '../../../lib/viewer';
 import { BillingTable, BucketsTable, CoveragePanel, IdleTable } from '../../../components/panels';
 import { DateJump } from '../../../components/DateJump';
+import { DayStrip, DayStripLegend } from '../../../components/DayStrip';
 import { ManualEntry } from '../../../components/ManualEntry';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -76,7 +78,7 @@ export default async function DayPage({
 
   let content: ReactNode;
   try {
-    const [summary, coverage, buckets, idleBuckets, freshness, hosts, clients, manualEntries] = await Promise.all([
+    const [summary, coverage, buckets, idleBuckets, freshness, hosts, clients, manualEntries, timeline] = await Promise.all([
       getDailyClientSummary(pool, schema, date, fHost),
       getCoverage(pool, schema, date, fHost),
       getCategoryBreakdown(pool, schema, date, cfg.timezone, fHost),
@@ -85,6 +87,7 @@ export default async function DayPage({
       getHosts(pool, schema),
       listClientOptions(),
       listManualEntries(date, fHost ?? null),
+      getDayTimeline(pool, schema, date, cfg.timezone, fHost),
     ]);
 
     const billable = summary.reduce((a, r) => a + r.billableSeconds, 0);
@@ -117,6 +120,10 @@ export default async function DayPage({
             ))}
           </div>
         )}
+        <h2 style={{ marginTop: 8 }}>Workday</h2>
+        <DayStrip rows={timeline} day={date} tz={cfg.timezone} awayCutoffSeconds={cfg.awayCutoffSeconds} />
+        <DayStripLegend />
+
         <div className="cards">
           <div className="card">
             <div className="k">Total on computer</div>
