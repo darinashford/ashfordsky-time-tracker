@@ -3,7 +3,6 @@ import Link from 'next/link';
 import { localDate, secondsToHours } from '@tt/shared';
 import { getHosts, getRangeClientSummary } from '@tt/db';
 import { getDb } from '../../../../lib/db';
-import { getViewerScope } from '../../../../lib/viewer';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const FIRST_DATA_YEAR = 2026; // tracking started June 2026
@@ -204,23 +203,20 @@ export default async function RangePage({
   const range = rangeFor(period, anchor);
   const prev = ymd(addDays(parse(range.start), -1));
   const next = ymd(addDays(parse(range.end), 1));
-  // Reporting: the owner sees the firm-wide view (everyone by default) and may
-  // switch to one person; a non-owner is scoped to their own machine, no
-  // switcher — same permission rule as Today and Raw Data.
-  const scope = await getViewerScope();
+  // Reporting is the firm-wide view: everyone (owner and staff alike) sees the
+  // whole firm by default and may switch to any one person. This is the one tab
+  // that is intentionally shared — Today and Raw Data stay personal/owner-gated.
   const qHost = typeof searchParams.host === 'string' && searchParams.host ? searchParams.host : undefined;
-  const fHost = scope.isOwner ? qHost : scope.selfHost ?? undefined;
-  const q = scope.isOwner && qHost ? `?host=${encodeURIComponent(qHost)}` : ''; // preserve person across nav
+  const fHost = qHost;
+  const q = qHost ? `?host=${encodeURIComponent(qHost)}` : ''; // preserve person across nav
 
-  // Person switcher data — owner-only; fetched outside the body so it can render
-  // at the very top even if the summary query fails.
+  // Person switcher data — shown to everyone here; fetched outside the body so it
+  // can render at the very top even if the summary query fails.
   let hosts: string[] = [];
-  if (scope.isOwner) {
-    try {
-      hosts = await getHosts(pool, schema);
-    } catch {
-      hosts = [];
-    }
+  try {
+    hosts = await getHosts(pool, schema);
+  } catch {
+    hosts = [];
   }
 
   let body: ReactNode;
