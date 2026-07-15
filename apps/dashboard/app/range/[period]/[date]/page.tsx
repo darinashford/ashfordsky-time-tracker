@@ -230,9 +230,10 @@ export default async function RangePage({
     const nullRow = rows.find((r) => !r.clientId);
     const clients = rows.filter((r) => r.clientId).sort((a, b) => b.totalSeconds - a.totalSeconds);
 
+    // Any time on a client is billable (confidence is a review signal, not a
+    // billing gate) — so billable == client total; there is no separate pending.
     const billable = clients.reduce((a, r) => a + r.billableSeconds, 0);
     const clientTotal = clients.reduce((a, r) => a + r.totalSeconds, 0);
-    const pending = Math.max(0, clientTotal - billable); // attributed to a client but not yet confirmed
     const nonbillable = nullRow?.nonbillableSeconds ?? 0;
     const unattributed = Math.max(0, (nullRow?.totalSeconds ?? 0) - nonbillable);
     const grand = clientTotal + (nullRow?.totalSeconds ?? 0);
@@ -268,13 +269,11 @@ export default async function RangePage({
         <h2>Billable vs non-billable</h2>
         <div className="bar" style={{ height: 26, borderRadius: 6 }}>
           <span style={{ width: w(billable, grand), background: C.billable }} title={`Billable ${hrs(billable)}`} />
-          <span style={{ width: w(pending, grand), background: C.pending }} title={`Likely (unconfirmed) ${hrs(pending)}`} />
           <span style={{ width: w(nonbillable, grand), background: C.nonbillable }} title={`Non-billable ${hrs(nonbillable)}`} />
           <span style={{ width: w(unattributed, grand), background: C.unattributed }} title={`Unattributed ${hrs(unattributed)}`} />
         </div>
         <div className="legend">
           <span><i style={{ background: C.billable }} />Billable {hrs(billable)}</span>
-          <span><i style={{ background: C.pending }} />Likely (unconfirmed) {hrs(pending)}</span>
           <span><i style={{ background: C.nonbillable }} />Non-billable {hrs(nonbillable)}</span>
           <span><i style={{ background: C.unattributed }} />Unattributed {hrs(unattributed)}</span>
         </div>
@@ -301,8 +300,7 @@ export default async function RangePage({
                   </td>
                   <td style={{ width: '46%' }}>
                     <div className="bar" style={{ height: 12 }} title={`${hrs(r.totalSeconds)} of ${hrs(maxTotal)} (top client)`}>
-                      <span style={{ width: w(r.billableSeconds, maxTotal), background: C.billable }} />
-                      <span style={{ width: w(Math.max(0, r.totalSeconds - r.billableSeconds), maxTotal), background: C.pending }} />
+                      <span style={{ width: w(r.totalSeconds, maxTotal), background: C.billable }} />
                     </div>
                   </td>
                   <td className="num" style={{ color: C.billable }}>{hrs(r.billableSeconds)}</td>
@@ -335,7 +333,7 @@ export default async function RangePage({
           </table>
         )}
         <p className="muted small" style={{ marginTop: 10 }}>
-          {range.start} → {range.end}. “Likely (unconfirmed)” is time attributed to a client on a weaker signal. Times in MT.
+          {range.start} → {range.end}. Any time attributed to a client counts as billable. Times in MT.
         </p>
       </>
     );

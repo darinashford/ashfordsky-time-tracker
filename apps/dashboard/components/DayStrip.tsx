@@ -28,7 +28,10 @@ const LABEL: Record<Cat, string> = {
 };
 
 type Cat = 'billable' | 'nonbillable' | 'idle';
-const BILLABLE_STATUSES = new Set(['auto_finalized', 'confirmed', 'suggested']);
+// Any client-attributed block is billable, including low-confidence (needs_review)
+// ones — confidence is a review signal, not a billing gate. Matches the
+// daily_client_summary.billable_seconds rule.
+const BILLABLE_STATUSES = new Set(['auto_finalized', 'confirmed', 'suggested', 'needs_review']);
 
 /** Minutes since local midnight of `day` for an ISO timestamp, in `tz`. */
 function minutesIntoDay(iso: string, day: string, tz: string): number {
@@ -111,7 +114,7 @@ export function DayStrip({
     ) {
       cat = 'billable';
     } else {
-      cat = 'nonbillable'; // needs_review, unresolved, non-billable buckets
+      cat = 'nonbillable'; // unresolved / no-client, or non-billable buckets
     }
     const s = minutesIntoDay(r.startTs, day, tz);
     const e = s + r.durationSeconds / 60;

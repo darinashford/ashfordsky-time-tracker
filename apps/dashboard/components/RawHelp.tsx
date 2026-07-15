@@ -97,7 +97,7 @@ const LABELS: LabelRow[] = [
     label: 'Borrowed from the surrounding activity',
     trust: UNCERTAIN,
     meaning:
-      'The weakest signal, applied last. The block had no signal of its own AND no recent context to carry forward — so after everything else ran, it borrowed the client from the nearest confidently-attributed block within 30 minutes before or after it. Only 45% confidence: it always lands in Uncertain and is never billed without your review.',
+      'The weakest signal, applied last. The block had no signal of its own AND no recent context to carry forward — so after everything else ran, it borrowed the client from the nearest confidently-attributed block within 30 minutes before or after it. Only 45% confidence, so it lands in Uncertain and is worth a review — but because it is attributed to a client it still counts as billable.',
   },
   {
     label: 'No client signal found',
@@ -139,10 +139,11 @@ export function LabelsHelp() {
         </tbody>
       </table>
       <p className="small muted" style={{ marginTop: 10, maxWidth: 760 }}>
-        The status pills at the top of the Blocks tab are the same idea from the billing side:{' '}
-        <strong>Confident</strong> = auto-finalized or confirmed by you; <strong>Likely</strong> = suggested,
-        counts as billable pending your confirm; <strong>Uncertain</strong> = needs review, not billed until you
-        decide; <strong>Unknown</strong> = no attribution at all; <strong>Non-billable</strong> = bucketed, never billed.
+        The status pills at the top of the Blocks tab are your <em>confidence</em> in the attribution — a review
+        signal, not a billing gate. Any block tied to a client is billable: <strong>Confident</strong> =
+        auto-finalized or confirmed by you; <strong>Likely</strong> = suggested; <strong>Uncertain</strong> = tied
+        to a client but low-confidence, so still billed but worth a look; <strong>Unknown</strong> = no attribution
+        at all (not billed); <strong>Non-billable</strong> = bucketed, never billed.
       </p>
     </>
   );
@@ -203,11 +204,12 @@ export function HowItWorks({
       <h2>4 · Confidence → status</h2>
       <p className="small">
         Every attribution carries a confidence. At or above <strong>{autoPct}%</strong> it{' '}
-        <strong>auto-finalizes</strong> (Confident — billed, no action needed). From <strong>{revPct}%</strong>{' '}
-        to {autoPct}% it becomes a <strong>suggestion</strong> (Likely — counted as billable, waiting for your
-        confirm). Below {revPct}% it goes to <strong>review</strong> (Uncertain — not billed until you decide).
-        No signal at all = Unknown. Anything you set yourself is 100% and frozen. Recognized non-client activity
-        goes to a named non-billable bucket instead.
+        <strong>auto-finalizes</strong> (Confident — no action needed). From <strong>{revPct}%</strong>{' '}
+        to {autoPct}% it becomes a <strong>suggestion</strong> (Likely). Below {revPct}% it goes to{' '}
+        <strong>review</strong> (Uncertain — worth a look). All three are attributed to a client, so all three
+        are billable — confidence just tells you how much review each deserves. No signal at all = Unknown (not
+        billed). Anything you set yourself is 100% and frozen. Recognized non-client activity goes to a named
+        non-billable bucket instead.
       </p>
 
       <h2>5 · Idle time &amp; calls</h2>
@@ -272,17 +274,17 @@ export function HowItWorks({
           <strong>Active</strong> — time you were driving the machine, with idle removed.
         </li>
         <li>
-          <strong>Billable</strong> — the client work currently counted as billable: the <strong>Confident</strong>{' '}
-          and <strong>Likely</strong> slices. Uncertain time is <em>not</em> included until you review it, and
-          non-billable never is.
+          <strong>Billable</strong> — all client work: every block attributed to a client, regardless of
+          confidence (Confident + Likely + Uncertain). Only Unknown (no client) and non-billable buckets are
+          excluded.
         </li>
         <li>
           <strong>Confident</strong> — the share of your Active time that landed on a strong, direct signal (or
-          that you confirmed): auto-billed, no action needed.
+          that you confirmed): no action needed.
         </li>
         <li>
-          <strong>Uncertain</strong> — client time on a weak or conflicting signal, held out of billing until you
-          decide.
+          <strong>Uncertain</strong> — client time on a weak or conflicting signal. Still billable, but flagged so
+          you know which time is worth a quick review.
         </li>
       </ul>
       <p className="small">
