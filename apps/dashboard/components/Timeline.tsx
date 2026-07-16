@@ -1,7 +1,9 @@
 'use client';
 
 import { Fragment, memo, useMemo, useState } from 'react';
+import { useFormState } from 'react-dom';
 import { categoryLabel, formatDuration, localClock } from '@tt/shared';
+import { describeLearn } from '../lib/learn';
 import {
   dispositionBucket,
   type Disposition,
@@ -410,23 +412,54 @@ function ClientCell({ r, edit, ids }: { r: TimelineRowVM; edit?: EditCtx; ids?: 
           </div>
         )
       )}
-      {edit && ids && ids.length > 0 && <ClientReassign edit={edit} ids={ids} count={ids.length} />}
+      {edit && ids && ids.length > 0 && (
+        <ClientReassign edit={edit} ids={ids} count={ids.length} url={r.url} title={r.windowTitle} />
+      )}
     </td>
   );
 }
 
 /** Type-ahead client picker: reassigns this block (or a whole rolled-up cluster)
- *  to a client and, by default, teaches the engine so similar blocks follow. */
-function ClientReassign({ edit, ids, count }: { edit: EditCtx; ids: string[]; count: number }) {
+ *  to a client and, by default, teaches the engine so similar blocks follow.
+ *  Shows up-front what "remember" will (or won't) learn from this block. */
+function ClientReassign({
+  edit,
+  ids,
+  count,
+  url,
+  title,
+}: {
+  edit: EditCtx;
+  ids: string[];
+  count: number;
+  url: string | null;
+  title: string | null;
+}) {
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState('');
   const [sel, setSel] = useState<ClientOption | null>(null);
+  const [state, formAction] = useFormState(setClientAction, { done: false, count: 0, learned: null });
 
   const matches = useMemo(() => {
     const ql = q.trim().toLowerCase();
     if (!ql) return [];
     return edit.clients.filter((c) => c.name.toLowerCase().includes(ql)).slice(0, 8);
   }, [q, edit.clients]);
+
+  // What "remember" would learn from THIS block — shown before you save so it's
+  // never a surprise (and makes "nothing to remember from a call" explicit).
+  const willLearn = useMemo(() => describeLearn(url, title), [url, title]);
+
+  // Confirmation after a successful save (may be brief — the block jumps to the
+  // "You set the client yourself" group once it re-resolves).
+  if (state.done) {
+    return (
+      <div className="reassign-done small">
+        ✓ Set {state.count} block{state.count === 1 ? '' : 's'}
+        {state.learned ? <> · learned {state.learned}</> : <> · nothing to remember from this</>}
+      </div>
+    );
+  }
 
   if (!open) {
     return (
@@ -436,7 +469,7 @@ function ClientReassign({ edit, ids, count }: { edit: EditCtx; ids: string[]; co
     );
   }
   return (
-    <form action={setClientAction} className="reassign" onClick={(e) => e.stopPropagation()}>
+    <form action={formAction} className="reassign" onClick={(e) => e.stopPropagation()}>
       <input type="hidden" name="intervalId" value={ids.join(',')} />
       <input type="hidden" name="date" value={edit.date} />
       {edit.host && <input type="hidden" name="host" value={edit.host} />}
@@ -465,6 +498,10 @@ function ClientReassign({ edit, ids, count }: { edit: EditCtx; ids: string[]; co
       <label className="reassign-learn small">
         <input type="checkbox" name="learn" defaultChecked /> remember
       </label>
+      <div className="reassign-note small muted">
+        {willLearn ? <>→ remembers {willLearn}</> : <>→ nothing to remember from this — just {count > 1 ? 'these blocks' : 'this block'}</>}
+      </div>
+      {state.error && <div className="reassign-note small" style={{ color: '#c0392b' }}>{state.error}</div>}
       <div className="reassign-actions">
         <button type="submit" className="primary small" disabled={!sel}>
           save{count > 1 ? ` (${count})` : ''}

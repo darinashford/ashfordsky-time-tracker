@@ -16,6 +16,7 @@ import {
 import { correctionToRuleSpec } from '@tt/resolvers';
 import { getDb } from './db';
 import { getViewerScope } from './viewer';
+import { deriveLearn, describeLearn } from './learn';
 
 const str = (fd: FormData, k: string): string => String(fd.get(k) ?? '');
 const opt = (fd: FormData, k: string): string | undefined => {
@@ -62,45 +63,12 @@ export async function confirmAction(fd: FormData): Promise<void> {
   revalidatePath(`/day/${date}`);
 }
 
-// Generic words that shouldn't become a "remember this" rule on their own.
-const LEARN_STOPWORDS = new Set([
-  'inbox', 'google', 'chrome', 'microsoft', 'edge', 'outlook', 'gmail', 'mail',
-  'dashboard', 'invoice', 'invoices', 'return', 'returns', 'workbook', 'summary',
-  'report', 'reports', 'client', 'clients', 'tasks', 'excel', 'sheet', 'sheets',
-  'income', 'individual', 'partnership', 'parent', 'company', 'entity', 'entities',
-  'review', 'note', 'tracker', 'financial', 'cents', 'quickbooks', 'window', 'untitled',
-]);
-// Shared platforms whose host identifies no single client — never learn a host rule there.
-const SHARED_HOSTS = [
-  'missiveapp.com', 'mail.google.com', 'google.com', 'accounts.google.com', 'drive.google.com',
-  'docs.google.com', 'outlook.office.com', 'outlook.office365.com', 'gmail.com', 'proton.me',
-  'financial-cents.com', 'intuit.com', 'qbo.intuit.com', 'accounts.intuit.com', 'chatgpt.com',
-  'claude.ai', 'slack.com', 'notion.so', 'boldsign.com', 'onespan.com', 'gusto.com',
-];
-
-/**
- * From a corrected block, pick the strongest signal to learn a durable rule so
- * similar future blocks auto-attribute: a client-specific URL host, else a
- * distinctive word from the window title. Returns null when nothing is safe to
- * generalize (then we still keep the one-block correction, just don't learn).
- */
-function deriveLearnAction(
-  iv: { url: string | null; window_title: string | null },
-  clientId: string,
-): { action: string; payload: Record<string, string> } | null {
-  let host = '';
-  try {
-    if (iv.url) host = new URL(iv.url).hostname.replace(/^www\./, '');
-  } catch {
-    /* not a URL */
-  }
-  if (host && !SHARED_HOSTS.some((s) => host === s || host.endsWith('.' + s))) {
-    return { action: 'map_url', payload: { host, clientId } };
-  }
-  const title = (iv.window_title ?? '').toLowerCase();
-  const token = (title.match(/[a-z]{6,}/g) ?? []).find((w) => !LEARN_STOPWORDS.has(w));
-  if (token) return { action: 'map_missive', payload: { kind: 'label', value: token, clientId } };
-  return null;
+export interface SetClientState {
+  done: boolean;
+  count: number;
+  /** Human phrase for the rule created, or null when nothing generalized. */
+  learned: string | null;
+  error?: string;
 }
 
 /**
@@ -108,26 +76,29 @@ function deriveLearnAction(
  * block to that client (confirmed, so re-resolves never overwrite it), records
  * the correction, and, when the block carries a generalizable signal, creates a
  * durable rule so the engine attributes similar blocks itself going forward.
+ * Returns a result the picker shows: how many blocks changed and what (if
+ * anything) it remembered.
  */
-export async function setClientAction(fd: FormData): Promise<void> {
+export async function setClientAction(_prev: SetClientState, fd: FormData): Promise<SetClientState> {
   const { pool, schema } = getDb();
   // A rolled-up cluster sends every block id it covers (comma-separated).
   const ids = str(fd, 'intervalId').split(',').map((s) => s.trim()).filter(Boolean);
   const clientId = str(fd, 'clientId');
   const date = str(fd, 'date');
   const learn = fd.get('learn') != null;
-  if (!ids.length || !clientId) return;
+  if (!ids.length || !clientId) return { done: false, count: 0, learned: null, error: 'Pick a client first.' };
 
   const ivq = await pool.query(
     `select id, hostname, app, window_title, url from ${schema}.intervals where id = any($1::uuid[])`,
     [ids],
   );
-  if (!ivq.rows.length) return;
+  if (!ivq.rows.length) return { done: false, count: 0, learned: null, error: 'Those blocks no longer exist.' };
   const iv = ivq.rows[0] as { hostname: string | null; window_title: string | null; url: string | null };
 
   // Non-owners may only correct their own machine's blocks.
   const scope = await getViewerScope();
-  if (!scope.isOwner && scope.selfHost && iv.hostname && iv.hostname !== scope.selfHost) return;
+  if (!scope.isOwner && scope.selfHost && iv.hostname && iv.hostname !== scope.selfHost)
+    return { done: false, count: 0, learned: null, error: 'You can only reassign your own time.' };
 
   const clientGroupId = await clientGroup(pool, clientId);
   for (const row of ivq.rows as Array<{ id: string }>) {
@@ -153,9 +124,15 @@ export async function setClientAction(fd: FormData): Promise<void> {
     });
   }
 
+  let learnedDesc: string | null = null;
   if (learn) {
-    const learned = deriveLearnAction(iv, clientId);
-    const spec = learned ? correctionToRuleSpec({ action: learned.action, clientId, payload: learned.payload }) : null;
+    const signal = deriveLearn(iv.url, iv.window_title);
+    const mapped = signal
+      ? signal.kind === 'host'
+        ? { action: 'map_url', payload: { host: signal.value, clientId } }
+        : { action: 'map_missive', payload: { kind: 'label', value: signal.value, clientId } }
+      : null;
+    const spec = mapped ? correctionToRuleSpec({ action: mapped.action, clientId, payload: mapped.payload }) : null;
     if (spec) {
       const ruleId = await upsertRule(pool, schema, {
         ruleType: spec.ruleType,
@@ -168,10 +145,12 @@ export async function setClientAction(fd: FormData): Promise<void> {
         priority: spec.priority,
       });
       await insertCorrection(pool, schema, { intervalId: ids[0]!, action: 'create_rule', newClientId: clientId, createdRuleId: ruleId });
+      learnedDesc = describeLearn(iv.url, iv.window_title);
     }
   }
   revalidatePath(`/raw/${date}`);
   revalidatePath(`/day/${date}`);
+  return { done: true, count: ivq.rows.length, learned: learnedDesc };
 }
 
 export async function nonbillableAction(fd: FormData): Promise<void> {
