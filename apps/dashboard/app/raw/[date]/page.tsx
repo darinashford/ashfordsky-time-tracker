@@ -62,6 +62,7 @@ export default async function RawPage({
         autoFinalizeThreshold={cfg.autoFinalizeThreshold}
         reviewThreshold={cfg.reviewThreshold}
         awayCutoffSeconds={cfg.awayCutoffSeconds}
+        idleGraceSeconds={cfg.idleGraceSeconds}
         screenshotsEnabled={cfg.screenshotsEnabled || (shots?.active ?? false)}
         screenshotStoresLocally={(shots?.storedLocal ?? 0) > 0}
         screenshotStableSeconds={cfg.screenshotStableSeconds}

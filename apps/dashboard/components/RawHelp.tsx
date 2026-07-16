@@ -202,7 +202,10 @@ export function HowItWorks({
         log. Then a chain of matchers runs over each block, strongest first: your rules → calendar/meetings →
         accounting-system IDs → mapped sheets/files/folders → emails → websites → chat/AI content → the client’s
         name in the title → screenshot text (OCR) → and only then the two inference fallbacks (“carried over”,
-        “borrowed”). Each proposes a client with a confidence; the strongest signal wins. The{' '}
+        “borrowed”). They run in that fixed priority order and the <strong>first one to recognize the client
+        wins</strong> — a higher-priority signal (say, an email domain) beats a lower one (a name in a title)
+        even when the lower one looks more specific. If two independent direct signals point at{' '}
+        <em>different</em> clients, the block is flagged for review instead of guessing. The{' '}
         <strong>What the labels mean</strong> tab explains every outcome.
       </p>
 
@@ -221,10 +224,12 @@ export function HowItWorks({
       <p className="small">
         A no-input stretch under <strong>{idleMin} minutes</strong> is a pause at the desk — reading, thinking,
         listening on a call — and still counts as working, attributed like the block around it. Only{' '}
-        <strong>{idleMin}+ minutes</strong> with no input marks a block genuinely idle. Idle during a
-        meeting/call, or while reading a client’s work, is promoted back to counted time. An unbroken idle
+        <strong>{idleMin}+ minutes</strong> with no input marks a block genuinely idle. An unbroken idle
         stretch longer than <strong>{awayMin} minutes</strong> is treated as away (lunch, gone from desk) and
-        not counted — <em>except on a live call</em>, where listening time counts in full.
+        not counted — <em>except on a live client or prospect call</em>, where listening time counts in full.
+        An internal meeting or an app just left open does <em>not</em> keep the clock running past that cutoff.
+        If the machine sleeps or locks, that time is away too: a gap in the idle sensor means you were gone,
+        even if a window stayed “focused.”
       </p>
       <p className="small">
         A call is tied to a client by <strong>who was on it</strong> — the calendar / Krisp attendees — so a
@@ -279,7 +284,8 @@ export function HowItWorks({
         {llmEnabled ? 'Enabled: an' : 'Optional (currently off): an'} AI model periodically looks at leftover
         blocks the rules couldn’t place — ambiguous AI/dev/email time — and classifies each as a specific
         client, firm tooling, or unknown. Its picks are <strong>never auto-billed</strong>: they arrive as
-        suggestions for your confirm, and its daily cost shows on the dashboard.
+        suggestions for your confirm. It is opt-in (needs an API key), runs from a machine locally, and is
+        capped to a set number of blocks per run so its cost stays bounded.
       </p>
 
       <h2>8 · Your corrections teach it</h2>
@@ -329,12 +335,14 @@ export function HowItWorks({
       <h2>10 · Privacy &amp; where your data lives</h2>
       <p className="small">
         Activity is recorded <strong>locally</strong> by ActivityWatch on each person’s own machine. Screenshots
-        (when on) <strong>never leave that machine</strong> — they’re stored locally, read for text on-device, and
-        deleted after {screenshotRetentionDays} days. What syncs to the firm database (Supabase) is the
-        attribution data — app / window title / URL, timings, and the chosen client — <em>not</em> the
-        screenshots. Teammates’ machines have <strong>no database access</strong>: they send their time through a
-        personal token and the server stamps whose it is; only the owner’s machine writes directly. Revoking a
-        token stops new time immediately, without deleting anything already recorded.
+        (when on) are read for their text on the machine that took them; the <strong>image itself is never
+        uploaded</strong> to the firm database — only the extracted text is. Owner images are kept on disk for{' '}
+        {screenshotRetentionDays} days then deleted (see <strong>Screenshots</strong> above for the exact folder
+        and the OneDrive-sync caveat); teammates’ machines store no image at all. What syncs to the firm database
+        (Supabase) is the attribution data — app / window title / URL, timings, and the chosen client — plus that
+        OCR text, <em>never</em> the images. Teammates’ machines have <strong>no database access</strong>: they
+        send their time through a personal token and the server stamps whose it is; only the owner’s machine
+        writes directly. Revoking a token stops new time immediately, without deleting anything already recorded.
       </p>
     </div>
   );
