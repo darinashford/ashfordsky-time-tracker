@@ -18,6 +18,7 @@ import {
   bumpRuleHits,
   closePool,
   type DayResolutionRow,
+  deleteResolution,
   enqueueReview,
   ensureScreenshotIntent,
   getIntervalsForDay,
@@ -88,7 +89,12 @@ function computeIdleRuns(intervals: Interval[]): Map<string, number> {
     let total = 0;
     let lastEnd = Date.parse(intervals[i]!.startTs);
     const ids: string[] = [];
-    while (j < intervals.length && intervals[j]!.isAfk && Date.parse(intervals[j]!.startTs) - lastEnd <= 120_000) {
+    // Bridge coverage gaps up to 5 min so a long idle stretch isn't fragmented by
+    // the periodic blips that punctuate it — most notably the 10-min sync task's
+    // own terminal window, which leaves a ~2.5-min hole in window coverage. A tight
+    // 2-min bridge split an hour at lunch into sub-grace runs that then flipped
+    // back to "active" and re-billed.
+    while (j < intervals.length && intervals[j]!.isAfk && Date.parse(intervals[j]!.startTs) - lastEnd <= 300_000) {
       total += intervals[j]!.durationSeconds;
       lastEnd = Date.parse(intervals[j]!.endTs);
       ids.push(intervals[j]!.id);
@@ -176,6 +182,18 @@ async function main(): Promise<void> {
       // with what's already in the DB) — the call-run pass reads the whole day.
       const currentRes = new Map<string, DayResolutionRow>(existing);
 
+      // A block that lands as "away" idle must not keep a stale billable/
+      // non-billable resolution from a time it was active — is_afk can flip
+      // active->idle as the normalizer / afk feed is refined. Clear it (and its
+      // review + audit) so away actually means away. Manual rows are never touched.
+      async function clearIfResolved(id: string): Promise<void> {
+        const prior = existing.get(id);
+        if (prior && prior.resolverVersion !== 'manual') {
+          await deleteResolution(pool, cfg.schema, id);
+          currentRes.delete(id);
+        }
+      }
+
       // One person's timeline at a time. Context carry-forward, neighbor fill,
       // idle runs, and call runs are all "what were YOU doing around then" logic —
       // mixing hosts lets one person's meeting/work bleed onto a coworker's blocks
@@ -241,8 +259,11 @@ async function main(): Promise<void> {
           // the away cutoff like any other long idle. A real client call still
           // survives — it identifies to the client and the call-run pass carries it.
           const onCall = cat?.key === 'external_call';
-          if (!onCall && (idleRuns.get(iv.id) ?? iv.durationSeconds) > cfg.awayCutoffSeconds) continue;
-          if (cat?.tier === 'hard') continue; // locked screen / social / music — stay away
+          if (!onCall && (idleRuns.get(iv.id) ?? iv.durationSeconds) > cfg.awayCutoffSeconds) {
+            await clearIfResolved(iv.id);
+            continue;
+          }
+          if (cat?.tier === 'hard') { await clearIfResolved(iv.id); continue; } // locked/social/music — stay away
           const idleCtx = { graph, rules, config: resolverConfig, currentAnchor: engine.anchorFor(iv), ocrText: null };
           const { resolution: idleRes, winner: idleWinner } = runResolvers(iv, idleCtx);
           const idleBucket = bucketFor(
@@ -296,8 +317,10 @@ async function main(): Promise<void> {
             currentRes.set(iv.id, asDayRow(promotedRes));
             promotedIds.push(iv.id);
             counts.nonbillable++;
+          } else {
+            // anything else idle -> stays away (and must not keep a stale resolution)
+            await clearIfResolved(iv.id);
           }
-          // anything else idle -> stays away
           continue;
         }
 
