@@ -330,6 +330,74 @@ export async function loadClientGraph(
     return matches.slice().sort()[0]!;
   };
 
+  // Identify the client from who was actually IN a meeting/call. An external
+  // contact's exact email is strong; an unambiguous external domain is weak;
+  // internal / freemail / vendor / partner emails never vote. Votes are rolled
+  // up to the client GROUP, so a client split into sibling entities (e.g. PAAK
+  // HQ / Install / Direct Sales, all on pcraingutters.com) counts as ONE client
+  // instead of splitting into a 3-way tie that attributes nothing. A tie between
+  // two *different* groups still attributes nothing. Used by both the Krisp
+  // meetings log and the Outlook calendar feed below.
+  const groupKeyOf = (id: string): string => graph.clients.get(id)?.clientGroupId ?? id;
+  const clientFromParticipants = (
+    participants: string[],
+  ): { clientId: string; confidence: number } | null => {
+    const votes = new Map<string, { weight: number; ids: Set<string>; exact: boolean }>();
+    const add = (id: string, w: number, exact: boolean): void => {
+      const g = groupKeyOf(id);
+      const v = votes.get(g) ?? { weight: 0, ids: new Set<string>(), exact: false };
+      v.weight += w;
+      v.ids.add(id);
+      if (exact) v.exact = true;
+      votes.set(g, v);
+    };
+    for (const email of participants) {
+      const dom = emailDomain(email);
+      if (
+        !dom ||
+        internalDomains.has(dom) ||
+        freemailDomains.has(dom) ||
+        graph.vendorDomains.has(dom) ||
+        graph.partnerDomains.has(dom)
+      ) {
+        continue;
+      }
+      const exact = graph.byEmail.get(email);
+      if (exact && exact.length) {
+        // One email = one strong vote for its group (dedup sibling entities).
+        const seenGroups = new Set<string>();
+        for (const id of exact) {
+          const g = groupKeyOf(id);
+          if (!seenGroups.has(g)) {
+            seenGroups.add(g);
+            add(id, 3, true);
+          }
+        }
+        continue;
+      }
+      const byDom = graph.byDomain.get(dom);
+      if (byDom && byDom.length && new Set(byDom.map(groupKeyOf)).size === 1) {
+        add(byDom[0]!, 1, false);
+      }
+    }
+    let best: { weight: number; ids: Set<string>; exact: boolean } | null = null;
+    let bestWeight = 0;
+    let tie = false;
+    for (const v of votes.values()) {
+      if (v.weight > bestWeight) {
+        bestWeight = v.weight;
+        best = v;
+        tie = false;
+      } else if (v.weight === bestWeight) {
+        tie = true;
+      }
+    }
+    if (!best || tie || bestWeight === 0) return null;
+    const clientId = [...best.ids].sort()[0]!;
+    if (internalClientIds.has(clientId)) return null;
+    return { clientId, confidence: best.exact ? 0.9 : 0.86 };
+  };
+
   const meetings = await pool.query(
     `select m.title, m.started_at, m.ended_at, mcl.client_id,
             (select array_agg(distinct lower(x.email))
@@ -366,7 +434,18 @@ export async function loadClientGraph(
       clientId = r.client_id;
       confidence = 0.92;
     }
-    // 2) Otherwise recognize the client from the meeting title (rolled up to group).
+    // 2) Otherwise, who was ON the call — an external client contact among the
+    // participants identifies it, even when the title is generic ("COGS
+    // Discussion"). This spans the meeting's FULL window, so a call that ran past
+    // its scheduled slot bills the whole time to that client.
+    if (!clientId) {
+      const byPeople = clientFromParticipants(r.participants ?? []);
+      if (byPeople) {
+        clientId = byPeople.clientId;
+        confidence = byPeople.confidence;
+      }
+    }
+    // 3) Otherwise recognize the client from the meeting title (rolled up to group).
     if (!clientId) {
       const t = clientFromTitle(title);
       if (t) {
@@ -416,43 +495,9 @@ export async function loadClientGraph(
     if (!(endMs > startMs)) continue;
     const participants = [...new Set([...(r.attendees ?? []), r.organizer ?? ''].filter(Boolean))];
 
-    const tally = new Map<string, number>();
-    const vote = (id: string, w: number) => tally.set(id, (tally.get(id) ?? 0) + w);
-    for (const email of participants) {
-      const dom = emailDomain(email);
-      if (
-        !dom ||
-        internalDomains.has(dom) ||
-        freemailDomains.has(dom) ||
-        graph.vendorDomains.has(dom) ||
-        graph.partnerDomains.has(dom)
-      ) {
-        continue;
-      }
-      const exact = graph.byEmail.get(email);
-      if (exact && exact.length) {
-        for (const id of new Set(exact)) vote(id, 3);
-        continue;
-      }
-      const byDom = graph.byDomain.get(dom);
-      if (byDom && new Set(byDom).size === 1) vote(byDom[0]!, 1);
-    }
-    let best = '';
-    let bestN = 0;
-    for (const [cid, n] of tally) {
-      if (n > bestN) {
-        bestN = n;
-        best = cid;
-      }
-    }
-    const tie = [...tally.values()].filter((n) => n === bestN).length > 1;
-
-    let clientId: string | null = null;
-    let confidence = 0;
-    if (best && !tie && !internalClientIds.has(best)) {
-      clientId = best;
-      confidence = bestN >= 3 ? 0.9 : 0.86; // exact-email vote vs domain-only
-    }
+    const byPeople = clientFromParticipants(participants);
+    let clientId: string | null = byPeople?.clientId ?? null;
+    let confidence = byPeople?.confidence ?? 0;
     if (!clientId) {
       const t = clientFromTitle(r.subject ?? '');
       if (t) {

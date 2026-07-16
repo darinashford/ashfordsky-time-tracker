@@ -153,6 +153,7 @@ export function HowItWorks({
   autoFinalizeThreshold,
   reviewThreshold,
   awayCutoffSeconds,
+  idleGraceSeconds = 600,
   screenshotsEnabled,
   screenshotStoresLocally = false,
   screenshotStableSeconds,
@@ -162,6 +163,7 @@ export function HowItWorks({
   autoFinalizeThreshold: number;
   reviewThreshold: number;
   awayCutoffSeconds: number;
+  idleGraceSeconds?: number;
   screenshotsEnabled: boolean;
   screenshotStoresLocally?: boolean;
   screenshotStableSeconds: number;
@@ -171,6 +173,7 @@ export function HowItWorks({
   const autoPct = Math.round(autoFinalizeThreshold * 100);
   const revPct = Math.round(reviewThreshold * 100);
   const awayMin = Math.round(awayCutoffSeconds / 60);
+  const idleMin = Math.round(idleGraceSeconds / 60);
   return (
     <div style={{ maxWidth: 780 }}>
       <h2 style={{ marginTop: 4 }}>1 · Watching &amp; the 10-minute sync</h2>
@@ -216,13 +219,20 @@ export function HowItWorks({
 
       <h2>5 · Idle time &amp; calls</h2>
       <p className="small">
-        No input for 3+ minutes marks a block idle. Idle during a meeting/call, or while reading a client’s
-        work, is promoted back to counted time (you were working — just not typing). An unbroken idle stretch
-        longer than <strong>{awayMin} minutes</strong> is treated as away (lunch, gone from desk) and not
-        counted — <em>except on a live call</em>, where listening time counts in full. A continuous call keeps
-        its identified client for the whole call, even past the meeting’s logged end; a call that never
-        identifies to a client is bucketed “Calls — prospects / vendors”, never silently billed to the previous
-        client. Off-computer time (a lunch, a site visit) can be added as a manual entry on Today.
+        A no-input stretch under <strong>{idleMin} minutes</strong> is a pause at the desk — reading, thinking,
+        listening on a call — and still counts as working, attributed like the block around it. Only{' '}
+        <strong>{idleMin}+ minutes</strong> with no input marks a block genuinely idle. Idle during a
+        meeting/call, or while reading a client’s work, is promoted back to counted time. An unbroken idle
+        stretch longer than <strong>{awayMin} minutes</strong> is treated as away (lunch, gone from desk) and
+        not counted — <em>except on a live call</em>, where listening time counts in full.
+      </p>
+      <p className="small">
+        A call is tied to a client by <strong>who was on it</strong> — the calendar / Krisp attendees — so a
+        client meeting bills to that client for the <strong>whole call</strong>, even past the meeting’s logged
+        end and even when the title doesn’t name them (a “COGS Discussion” with the client’s people on it still
+        lands on that client; sibling entities in one ownership group count as the same client). A call with no
+        client among its attendees is bucketed “Calls — prospects / vendors”, never silently billed to the
+        previous client. Off-computer time (a lunch, a site visit) can be added as a manual entry on Today.
       </p>
 
       <h2>6 · Screenshots</h2>

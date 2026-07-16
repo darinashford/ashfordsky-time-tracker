@@ -195,10 +195,21 @@ async function main(): Promise<void> {
       const idleRuns = computeIdleRuns(intervals);
 
       for (const iv of intervals) {
+        // A short no-input stretch (< idle grace, default 10 min) is a pause at
+        // the desk — reading, thinking, listening on a call — not real idle.
+        // ActivityWatch flags AFK after ~3 min, which is too eager; here we hand
+        // such a block back to the normal active path so it counts and inherits
+        // the surrounding client (carry-forward). Only genuinely long idle
+        // (>= grace) takes the away/call idle branch below.
+        if (iv.isAfk && (idleRuns.get(iv.id) ?? iv.durationSeconds) < cfg.idleGraceSeconds) {
+          iv.isAfk = false;
+          promotedIds.push(iv.id);
+        }
         if (iv.isAfk) {
-          // Idle = AW saw no input 3+ min. Recover the billable part — a meeting,
-          // a call, or reading a client's work — and promote it into active time;
-          // leave no-window filler, locked/personal, and long stretches as away.
+          // Idle = a no-input stretch >= the idle grace. Recover the billable part
+          // — a meeting, a call, or reading a client's work — and promote it into
+          // active time; leave no-window filler, locked/personal, and long
+          // stretches (> away cutoff, and not a live call) as away.
           if (!iv.app || iv.durationSeconds < cfg.minIntervalSeconds) continue;
           // Respect a manual attribution on idle time too: promote it so it counts,
           // and don't re-resolve over your decision — a call you confirmed keeps its
