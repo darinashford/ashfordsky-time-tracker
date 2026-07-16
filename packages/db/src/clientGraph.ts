@@ -176,21 +176,6 @@ export async function loadClientGraph(
     }
   }
 
-  // ---- Review Tracker projects (notes.ashfordsky.com/projects/{id}) ---------
-  // The tracker lives in this same database and names its client on every
-  // project, so join it straight through: a project Keith adds there attributes
-  // his review time to that client with no sync step.
-  const projects = await pool.query(
-    `select tp.id::text as project_id, c.id as client_id
-       from public.tax_projects tp
-       join public.clients c on lower(c.name) = lower(tp.client_name)`,
-  );
-  for (const r of projects.rows as Array<Record<string, unknown>>) {
-    const clientId = r.client_id as string;
-    if (!graph.clients.has(clientId) || internalClientIds.has(clientId)) continue;
-    graph.byReviewProject.set(r.project_id as string, clientId);
-  }
-
   // ---- source_system_links (client-level external identifiers) --------------
   const links = await pool.query(
     `select internal_record_id as client_id, source_system, external_id, external_url, external_metadata
@@ -212,6 +197,13 @@ export async function loadClientGraph(
         break;
       case 'cch_axcess':
         if (externalId) graph.byCchId.set(externalId.toLowerCase(), clientId);
+        break;
+      // Review Tracker (notes.ashfordsky.com) project id -> client. The tracker
+      // keeps its own database, so these links have to be synced here; until
+      // they are, this map is empty and the resolver simply never fires (rather
+      // than guessing off an unrelated table's ids).
+      case 'review_tracker':
+        if (externalId) graph.byReviewProject.set(externalId, clientId);
         break;
       case 'qbo': {
         if (externalId) graph.byQboRealm.set(externalId, clientId);
