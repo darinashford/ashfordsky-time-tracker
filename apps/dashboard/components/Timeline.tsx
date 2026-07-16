@@ -302,7 +302,10 @@ const ClusterBlock = memo(function ClusterBlock({ cluster, tz, edit }: { cluster
   if (cluster.rows.length === 1) return <BlockRow r={cluster.rows[0]!.r} tz={tz} edit={edit} />;
   const first = cluster.rows[0]!.r;
   const last = cluster.rows[cluster.rows.length - 1]!.r;
-  const shown = showAll ? cluster.rows : cluster.rows.slice(0, EXPAND_CAP);
+  // Header keeps the full time span (rows are chronological), but the expanded
+  // chunks list shows the longest first down to the shortest.
+  const ordered = [...cluster.rows].sort((a, b) => b.r.durationSeconds - a.r.durationSeconds);
+  const shown = showAll ? ordered : ordered.slice(0, EXPAND_CAP);
   return (
     <>
       <tr className="cluster" onClick={() => setOpen((v) => !v)}>
