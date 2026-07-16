@@ -317,6 +317,49 @@ export async function getIdleBreakdown(
   return res.rows as IdleBucket[];
 }
 
+/** Slim per-interval rows for the "when did they work" strips, tagged with the
+ *  local day so the caller can group into one column per day. Only the fields
+ *  the strip needs (no screenshot/review joins) so a month-wide range stays cheap. */
+export interface StripRow {
+  day: string; // local (MT) calendar date, YYYY-MM-DD
+  id: string;
+  startTs: string;
+  endTs: string;
+  durationSeconds: number;
+  app: string | null;
+  isAfk: boolean;
+  clientId: string | null;
+  isBillable: boolean | null;
+  status: string | null;
+}
+
+export async function getRangeStripRows(
+  pool: pg.Pool,
+  schema: string,
+  start: string,
+  end: string,
+  tz: string,
+  host?: string | null,
+): Promise<StripRow[]> {
+  const s = validIdent(schema);
+  const res = await pool.query(
+    `select to_char((i.start_ts at time zone $3)::date, 'YYYY-MM-DD') as day,
+            i.id, i.start_ts as "startTs", i.end_ts as "endTs",
+            i.duration_seconds as "durationSeconds", i.app, i.is_afk as "isAfk",
+            r.client_id as "clientId", r.is_billable as "isBillable", r.status
+       from ${s}.intervals i
+       left join ${s}.resolutions r on r.interval_id = i.id
+      where (i.start_ts at time zone $3)::date between $1::date and $2::date
+        and ($4::text is null or i.hostname = $4)
+      order by i.start_ts asc`,
+    [start, end, tz, host ?? null],
+  );
+  return res.rows.map((r) => ({
+    ...r,
+    durationSeconds: Number(r.durationSeconds),
+  })) as StripRow[];
+}
+
 /** Active (non-AFK) seconds summed across a date range, for the Reporting cards. */
 export async function getRangeActiveSeconds(
   pool: pg.Pool,

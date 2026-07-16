@@ -1,8 +1,16 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { localDate, secondsToHours } from '@tt/shared';
-import { getHosts, getRangeActiveSeconds, getRangeClientSummary, getRangeIdleSeconds } from '@tt/db';
+import {
+  getHosts,
+  getRangeActiveSeconds,
+  getRangeClientSummary,
+  getRangeIdleSeconds,
+  getRangeStripRows,
+  type StripRow,
+} from '@tt/db';
 import { getDb } from '../../../../lib/db';
+import { DayStrip, DayStripLegend, WorkdayColumns } from '../../../../components/DayStrip';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const FIRST_DATA_YEAR = 2026; // tracking started June 2026
@@ -221,10 +229,15 @@ export default async function RangePage({
 
   let body: ReactNode;
   try {
-    const [rows, activeSeconds, idleSeconds] = await Promise.all([
+    // The workday strip is per-day; year would be 365 columns, so skip it there.
+    const wantStrip = period !== 'year';
+    const [rows, activeSeconds, idleSeconds, stripRows] = await Promise.all([
       getRangeClientSummary(pool, schema, range.start, range.end, fHost),
       getRangeActiveSeconds(pool, schema, range.start, range.end, fHost),
       getRangeIdleSeconds(pool, schema, range.start, range.end, cfg.timezone, cfg.awayCutoffSeconds, fHost),
+      wantStrip
+        ? getRangeStripRows(pool, schema, range.start, range.end, cfg.timezone, fHost)
+        : Promise.resolve([] as StripRow[]),
     ]);
     const totalOnComputer = activeSeconds + idleSeconds;
     const nullRow = rows.find((r) => !r.clientId);
@@ -241,8 +254,48 @@ export default async function RangePage({
     const maxTotal = clients[0]?.totalSeconds ?? 1;
     const w = (sec: number, denom: number) => `${denom ? (sec / denom) * 100 : 0}%`;
 
+    // Workday strip(s): one horizontal bar for a single day, or one vertical bar
+    // per day (time top→bottom) across a week/month.
+    const stripByDay = new Map<string, StripRow[]>();
+    for (const r of stripRows) {
+      const arr = stripByDay.get(r.day);
+      if (arr) arr.push(r);
+      else stripByDay.set(r.day, [r]);
+    }
+    const dayList: string[] = [];
+    for (let d = parse(range.start); ymd(d) <= range.end; d = addDays(d, 1)) dayList.push(ymd(d));
+    const stripCols = dayList.map((day) => {
+      const dt = parse(day);
+      const rowsForDay = stripByDay.get(day) ?? [];
+      return period === 'month'
+        ? { day, rows: rowsForDay, label: fmt(dt, { day: 'numeric' }), sublabel: fmt(dt, { weekday: 'narrow' }) }
+        : { day, rows: rowsForDay, label: fmt(dt, { weekday: 'short' }), sublabel: fmt(dt, { month: 'numeric', day: 'numeric' }) };
+    });
+    const workday = wantStrip ? (
+      <>
+        <h2 style={{ marginTop: 8 }}>Workday</h2>
+        {period === 'day' ? (
+          <DayStrip
+            rows={stripByDay.get(range.start) ?? []}
+            day={range.start}
+            tz={cfg.timezone}
+            awayCutoffSeconds={cfg.awayCutoffSeconds}
+          />
+        ) : (
+          <WorkdayColumns
+            days={stripCols}
+            tz={cfg.timezone}
+            awayCutoffSeconds={cfg.awayCutoffSeconds}
+            colWidth={period === 'month' ? 20 : 46}
+          />
+        )}
+        <DayStripLegend />
+      </>
+    ) : null;
+
     body = (
       <>
+        {workday}
         <div className="cards">
           <div className="card">
             <div className="k">Total on computer</div>
