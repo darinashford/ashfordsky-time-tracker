@@ -234,11 +234,14 @@ async function main(): Promise<void> {
             { appNorm: sg.appNorm, host: sg.host, title: iv.windowTitle, url: iv.url },
             { staffNameTokens: graph.staffNameTokens },
           );
-          // A live call/meeting is engaged time even across a long silent stretch
-          // (you're listening), so exempt it from the "away" cutoff; other long idle
-          // is genuinely away.
-          const inMeeting = cat?.key === 'external_call' || cat?.key === 'firm_internal';
-          if (!inMeeting && (idleRuns.get(iv.id) ?? iv.durationSeconds) > cfg.awayCutoffSeconds) continue;
+          // A live external CALL is engaged time even across a long silent stretch
+          // (you're listening), so it's exempt from the "away" cutoff. An internal
+          // meeting (firm_internal) is NOT: a Teams chat/meeting left focused while
+          // you're gone shouldn't bill an hour of "internal" time, so it falls under
+          // the away cutoff like any other long idle. A real client call still
+          // survives — it identifies to the client and the call-run pass carries it.
+          const onCall = cat?.key === 'external_call';
+          if (!onCall && (idleRuns.get(iv.id) ?? iv.durationSeconds) > cfg.awayCutoffSeconds) continue;
           if (cat?.tier === 'hard') continue; // locked screen / social / music — stay away
           const idleCtx = { graph, rules, config: resolverConfig, currentAnchor: engine.anchorFor(iv), ocrText: null };
           const { resolution: idleRes, winner: idleWinner } = runResolvers(iv, idleCtx);

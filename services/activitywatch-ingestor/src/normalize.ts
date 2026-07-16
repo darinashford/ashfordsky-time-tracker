@@ -112,9 +112,30 @@ export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions 
   const gap = (opts.mergeGapSeconds ?? 60) * 1000;
   const windows = events.filter((e) => e.eventType === 'window' && e.durationSeconds > 0);
   const webs = events.filter((e) => e.eventType === 'web');
-  const afkSpans = events
-    .filter((e) => e.eventType === 'afk' && e.afk)
-    .map((e) => ({ s: ms(e.timestamp), e: ms(e.timestamp) + e.durationSeconds * 1000 }));
+  // Build a gapless afk-STATE timeline, then keep the spans where you were active
+  // (not-afk). The afk watcher logs a reading only when the state changes, and on
+  // this fleet it also goes silent for long stretches — so between two readings we
+  // CARRY the earlier reading's state forward across the gap. That distinguishes
+  // the two kinds of gap: a gap after an IDLE reading = you went idle and the
+  // machine slept (away — the reason a left-open Teams window billed through
+  // lunch), while a gap after an ACTIVE reading = a watcher hiccup while you kept
+  // working (still active). A window counts as active only where this timeline
+  // says not-afk; everywhere else is idle. No afk data at all (watcher missing) ->
+  // fall back to active so it can't zero out a day.
+  const afkEvents = events
+    .filter((e) => e.eventType === 'afk' && e.durationSeconds > 0)
+    .map((e) => ({ s: ms(e.timestamp), e: ms(e.timestamp) + e.durationSeconds * 1000, afk: !!e.afk }))
+    .sort((a, b) => a.s - b.s);
+  const hasAfk = afkEvents.length > 0;
+  const activeRanges: Array<{ s: number; e: number }> = [];
+  for (let i = 0; i < afkEvents.length; i++) {
+    const curEv = afkEvents[i]!;
+    const nextEv = afkEvents[i + 1];
+    // Extend this reading to the next reading's start so the gap inherits its state.
+    const spanEnd = nextEv ? Math.max(curEv.e, nextEv.s) : curEv.e;
+    if (!curEv.afk) activeRanges.push({ s: curEv.s, e: spanEnd });
+  }
+  const activeSpans = mergeRanges(activeRanges);
 
   const candidates: Candidate[] = windows
     .flatMap((w) => {
@@ -143,28 +164,26 @@ export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions 
         }
       }
 
-      // Split this window span at AFK boundaries so idle time is subtracted
-      // precisely (matching AW's "active"), instead of rounding the whole block
-      // to idle/active by a 50% threshold. Merged afk spans clipped to the window.
-      const clipped = afkSpans
-        .map((sp) => ({ s: Math.max(start, sp.s), e: Math.min(end, sp.e) }))
-        .filter((x) => x.e > x.s)
-        .sort((a, b) => a.s - b.s);
-      const afk: Array<{ s: number; e: number }> = [];
-      for (const sp of clipped) {
-        const last = afk[afk.length - 1];
-        if (last && sp.s <= last.e) last.e = Math.max(last.e, sp.e);
-        else afk.push({ ...sp });
-      }
+      // Split this window span into active vs idle by the not-afk coverage: parts
+      // covered by an active span are active; everything else (an explicit afk
+      // stretch, or an afk-feed gap where the machine slept) is idle. activeSpans
+      // is already merged + sorted. No afk data at all -> treat as active.
       const segs: Array<{ s: number; e: number; afk: boolean }> = [];
-      let cur = start;
-      for (const sp of afk) {
-        if (sp.s > cur) segs.push({ s: cur, e: sp.s, afk: false });
-        segs.push({ s: sp.s, e: sp.e, afk: true });
-        cur = sp.e;
+      if (!hasAfk) {
+        segs.push({ s: start, e: end, afk: false });
+      } else {
+        const active = activeSpans
+          .map((sp) => ({ s: Math.max(start, sp.s), e: Math.min(end, sp.e) }))
+          .filter((x) => x.e > x.s);
+        let cur = start;
+        for (const sp of active) {
+          if (sp.s > cur) segs.push({ s: cur, e: sp.s, afk: true });
+          segs.push({ s: sp.s, e: sp.e, afk: false });
+          cur = sp.e;
+        }
+        if (cur < end) segs.push({ s: cur, e: end, afk: true });
+        if (segs.length === 0) segs.push({ s: start, e: end, afk: true });
       }
-      if (cur < end) segs.push({ s: cur, e: end, afk: false });
-      if (segs.length === 0) segs.push({ s: start, e: end, afk: false });
 
       return segs.map((sg) => ({
         start: sg.s,
