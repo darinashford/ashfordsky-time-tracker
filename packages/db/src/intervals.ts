@@ -127,8 +127,9 @@ export async function upsertIntervals(
 
 /**
  * Clear a time range for a clean re-ingest: drop raw events in range, and drop
- * machine-owned intervals in range. Intervals you've corrected by hand (any
- * resolution written with resolver_version='manual') are preserved.
+ * machine-owned intervals in range. Intervals carrying work that can't be
+ * re-derived — your hand corrections ('manual') and paid AI judgements ('llm') —
+ * are preserved, matching pruneIntervalsExcept.
  */
 export async function clearIngestRange(
   pool: Queryable,
@@ -158,7 +159,7 @@ export async function clearIngestRange(
         and ($3::text is null or i.hostname = $3)
         and not exists (
           select 1 from ${s}.resolutions r
-           where r.interval_id = i.id and r.resolver_version = 'manual'
+           where r.interval_id = i.id and r.resolver_version in ('manual','llm')
         )`,
     [since, until, host],
   );
