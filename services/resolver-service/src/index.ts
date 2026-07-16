@@ -271,8 +271,16 @@ async function main(): Promise<void> {
             cat,
             resolverConfig.reviewThreshold,
           );
-          if (!idleBucket && idleRes.clientId && idleRes.confidence >= resolverConfig.reviewThreshold) {
-            // Billable: in a scheduled meeting, or reading a client's work (carry-forward).
+          // Past the idle grace, no-input time only counts as work when you were
+          // ON A CALL — a scheduled meeting (calendar/Krisp) or a live call app —
+          // because listening is working. It deliberately does NOT count merely
+          // because the last thing on screen belonged to a client: that let a
+          // 25-minute absence bill to whoever you last touched, which is what made
+          // a day of stepping away read as one unbroken block of work.
+          const inMeeting = idleRes.resolverType === 'calendar_event';
+          if (!idleBucket && idleRes.clientId && idleRes.confidence >= resolverConfig.reviewThreshold
+              && (onCall || inMeeting)) {
+            // Counts: you were in a call/meeting with this client, just not typing.
             await upsertResolution(pool, cfg.schema, idleRes);
             currentRes.set(iv.id, asDayRow(idleRes));
             promotedIds.push(iv.id);

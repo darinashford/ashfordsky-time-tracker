@@ -222,14 +222,33 @@ export function HowItWorks({
 
       <h2>5 · Idle time &amp; calls</h2>
       <p className="small">
-        A no-input stretch under <strong>{idleMin} minutes</strong> is a pause at the desk — reading, thinking,
-        listening on a call — and still counts as working, attributed like the block around it. Only{' '}
-        <strong>{idleMin}+ minutes</strong> with no input marks a block genuinely idle. An unbroken idle
-        stretch longer than <strong>{awayMin} minutes</strong> is treated as away (lunch, gone from desk) and
-        not counted — <em>except on a live client or prospect call</em>, where listening time counts in full.
-        An internal meeting or an app just left open does <em>not</em> keep the clock running past that cutoff.
-        If the machine sleeps or locks, that time is away too: a gap in the idle sensor means you were gone,
-        even if a window stayed “focused.”
+        The rule: <strong>no input for {idleMin}+ minutes isn’t work — unless you’re on a call.</strong>
+      </p>
+      <ul className="small" style={{ marginTop: 4, lineHeight: 1.7 }}>
+        <li>
+          <strong>Under {idleMin} minutes</strong> with no input is just a pause at the desk — reading,
+          thinking, a quick interruption. It counts as working and is attributed like the block around it.
+        </li>
+        <li>
+          <strong>{idleMin}+ minutes</strong> with no input does <em>not</em> count as working. It is not
+          billed to whatever happened to be on your screen — stepping away from a client’s file is still
+          stepping away.
+        </li>
+        <li>
+          <strong>The exception is a live call or meeting</strong> — a scheduled calendar/Krisp meeting, or a
+          call app on screen. Listening <em>is</em> working, so that time counts in full, even across a long
+          silent stretch, and even past the {awayMin}-minute cutoff.
+        </li>
+        <li>
+          <strong>Over {awayMin} minutes</strong> (and not on a call) is away — lunch, gone from the desk —
+          and drops out entirely, so it isn’t even “on computer” time. An app left open doesn’t keep the clock
+          running.
+        </li>
+      </ul>
+      <p className="small">
+        If the machine sleeps or locks, that time is away too: a locked screen is never active, and a gap in
+        the idle sensor means you were gone, even if a window stayed “focused.” Off-computer time can still be
+        added by hand — see below.
       </p>
       <p className="small">
         A call is tied to a client by <strong>who was on it</strong> — the calendar / Krisp attendees — so a
