@@ -317,6 +317,46 @@ export async function getIdleBreakdown(
   return res.rows as IdleBucket[];
 }
 
+/** Whether screenshot capture is actually happening firm-wide (any machine), and
+ *  in which mode — so the UI can report the true state instead of trusting the web
+ *  server's env var (capture runs on each person's machine, not the dashboard).
+ *  `storedLocal` = images saved to disk (owner sidecar); `ocrOnly` = token mode,
+ *  text uploaded and no image kept. */
+export interface ScreenshotActivity {
+  active: boolean;
+  storedLocal: number;
+  ocrOnly: number;
+  lastCapture: string | null;
+}
+
+export async function getScreenshotActivity(
+  pool: pg.Pool,
+  schema: string,
+  days = 7,
+): Promise<ScreenshotActivity> {
+  const s = validIdent(schema);
+  const res = await pool.query(
+    `select
+        count(*) filter (where storage_kind = 'local')::int as "storedLocal",
+        count(*) filter (where storage_kind <> 'local')::int as "ocrOnly",
+        max(captured_at) as "lastCapture"
+       from ${s}.screenshots
+      where status = 'available'
+        and captured_at is not null
+        and captured_at >= now() - ($1 || ' days')::interval`,
+    [days],
+  );
+  const r = (res.rows[0] ?? {}) as { storedLocal: number; ocrOnly: number; lastCapture: Date | string | null };
+  const storedLocal = Number(r.storedLocal ?? 0);
+  const ocrOnly = Number(r.ocrOnly ?? 0);
+  return {
+    active: storedLocal + ocrOnly > 0,
+    storedLocal,
+    ocrOnly,
+    lastCapture: r.lastCapture ? new Date(r.lastCapture).toISOString() : null,
+  };
+}
+
 /** Slim per-interval rows for the "when did they work" strips, tagged with the
  *  local day so the caller can group into one column per day. Only the fields
  *  the strip needs (no screenshot/review joins) so a month-wide range stays cheap. */

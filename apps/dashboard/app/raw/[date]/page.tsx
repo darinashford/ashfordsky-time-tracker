@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { localDate } from '@tt/shared';
-import { getDayTimeline, getHosts } from '@tt/db';
+import { getDayTimeline, getHosts, getScreenshotActivity } from '@tt/db';
 import { getDb, listClientOptions } from '../../../lib/db';
 import { getViewerScope } from '../../../lib/viewer';
 import { Timeline, type TabKey, type TimelineRowVM } from '../../../components/Timeline';
@@ -56,12 +56,14 @@ export default async function RawPage({
   if (view === 'labels') {
     content = <LabelsHelp />;
   } else if (view === 'how') {
+    const shots = await getScreenshotActivity(pool, schema).catch(() => null);
     content = (
       <HowItWorks
         autoFinalizeThreshold={cfg.autoFinalizeThreshold}
         reviewThreshold={cfg.reviewThreshold}
         awayCutoffSeconds={cfg.awayCutoffSeconds}
-        screenshotsEnabled={cfg.screenshotsEnabled}
+        screenshotsEnabled={cfg.screenshotsEnabled || (shots?.active ?? false)}
+        screenshotStoresLocally={(shots?.storedLocal ?? 0) > 0}
         screenshotStableSeconds={cfg.screenshotStableSeconds}
         screenshotRetentionDays={cfg.screenshotRetentionDays}
         llmEnabled={cfg.llmEnabled}

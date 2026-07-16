@@ -154,6 +154,7 @@ export function HowItWorks({
   reviewThreshold,
   awayCutoffSeconds,
   screenshotsEnabled,
+  screenshotStoresLocally = false,
   screenshotStableSeconds,
   screenshotRetentionDays,
   llmEnabled,
@@ -162,6 +163,7 @@ export function HowItWorks({
   reviewThreshold: number;
   awayCutoffSeconds: number;
   screenshotsEnabled: boolean;
+  screenshotStoresLocally?: boolean;
   screenshotStableSeconds: number;
   screenshotRetentionDays: number;
   llmEnabled: boolean;
@@ -227,22 +229,40 @@ export function HowItWorks({
       <p className="small">
         {screenshotsEnabled ? (
           <>
-            Screenshots are <strong>on</strong>, and deliberately narrow: they’re taken only for{' '}
-            <strong>low-confidence blocks</strong> (the matcher wants more evidence), only after the same window
-            has been on screen ~{screenshotStableSeconds}s, never for excluded apps/sites (password managers,
-            banking — and you can exclude more). They stay on the local machine, are kept{' '}
-            {screenshotRetentionDays} days, and their text (OCR) feeds attribution — “The screenshot text
-            identified this client”.
+            Screenshots are <strong>on</strong> and deliberately narrow: one is taken only when a block needs more
+            evidence to name the client — the current email/inbox window, or a{' '}
+            <strong>low-confidence block</strong> — and only after that window has been stable ~
+            {screenshotStableSeconds}s. Excluded apps/sites (password managers, banking) are never captured. What’s
+            kept is the <strong>text</strong> (OCR), which feeds attribution — “The screenshot text identified this
+            client”. Capture runs on <em>each person’s own machine</em>, never on the web server.
           </>
         ) : (
           <>
-            Screenshots are currently <strong>off</strong>. When enabled they’re taken only for low-confidence
-            blocks after ~{screenshotStableSeconds}s of a stable window, never for excluded apps/sites (password
-            managers, banking), stored locally, kept {screenshotRetentionDays} days, and read (OCR) to help
-            identify the client.
+            Screenshots are currently <strong>off</strong> here. When on, one is taken only for the current
+            email/inbox window or a low-confidence block, after ~{screenshotStableSeconds}s of a stable window,
+            never for excluded apps/sites (password managers, banking), and read (OCR) to help name the client.
           </>
         )}
       </p>
+      {screenshotsEnabled && (
+        <p className="small">
+          <strong>Where the image goes.</strong>{' '}
+          {screenshotStoresLocally ? (
+            <>
+              On the owner’s machine the PNG is written to the app’s{' '}
+              <span className="mono">.data/screenshots/&lt;date&gt;/</span> folder, kept{' '}
+              {screenshotRetentionDays} days, then auto-deleted. It is not uploaded to the dashboard or the
+              database — but note that if the app folder sits inside a synced location (e.g. OneDrive), that
+              folder will sync the images like any other file; point <span className="mono">SCREENSHOT_DIR</span>{' '}
+              at a non-synced path to keep them strictly on the machine.
+            </>
+          ) : (
+            <>The image is read in memory to pull its text and then discarded — nothing is written to disk.</>
+          )}{' '}
+          On teammates’ machines capture runs in <strong>OCR-only</strong> mode: the screen is read locally and{' '}
+          <em>only the extracted text</em> is uploaded — the image is never stored or sent.
+        </p>
+      )}
 
       <h2>7 · The AI pass</h2>
       <p className="small">
