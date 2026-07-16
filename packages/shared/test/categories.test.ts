@@ -117,6 +117,31 @@ describe('categorizeActivity — obvious non-billable that used to land in "unre
     expect(hit?.key).toBe('firm_tooling');
   });
 
+  it('buckets cross-client Review Tracker navigation as firm tooling', () => {
+    for (const url of [
+      'https://notes.ashfordsky.com/',
+      'https://notes.ashfordsky.com/dashboard',
+      'https://notes.ashfordsky.com/projects',
+      'https://notes.ashfordsky.com/clients',
+      'https://notes.ashfordsky.com/feedback',
+    ]) {
+      const hit = categorizeActivity({ appNorm: 'chrome', host: 'notes.ashfordsky.com', title: 'Review Tracker', url });
+      expect(hit?.key).toBe('firm_tooling');
+      expect(hit?.tier).toBe('firm'); // yields to a real client signal
+    }
+  });
+
+  it('does NOT bucket a Review Tracker project page (it is that client’s work)', () => {
+    expect(
+      categorizeActivity({
+        appNorm: 'chrome',
+        host: 'notes.ashfordsky.com',
+        title: 'Review Note Tracker',
+        url: 'https://notes.ashfordsky.com/projects/503',
+      }),
+    ).toBeNull();
+  });
+
   it('does NOT force real client work into a bucket (stays for the resolvers)', () => {
     // QuickBooks / a blank-title spreadsheet are billable client work with no
     // non-billable signal — categorize must return null so it is NOT mislabeled

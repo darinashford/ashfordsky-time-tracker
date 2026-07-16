@@ -7,6 +7,7 @@ export { emailResolver } from './email';
 export { emailSubjectResolver } from './emailSubject';
 export { qboResolver } from './qbo';
 export { financialCentsResolver } from './financialCents';
+export { reviewTrackerResolver } from './reviewTracker';
 export { excelResolver } from './excel';
 export { browserResolver } from './browser';
 export { aiChatResolver } from './aiChat';

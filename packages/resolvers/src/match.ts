@@ -25,6 +25,7 @@ export interface Signals {
   driveFolderId: string | null;
   fcId: string | null;
   qboRealm: string | null;
+  reviewProjectId: string | null;
 }
 
 const SHEET_RE = /(?:spreadsheets\/d\/|document\/d\/|\/d\/)([a-z0-9-_]{20,})/i;
@@ -38,6 +39,9 @@ const FC_CLIENT_PARAM_RE = /[?&]client_id=(\d+)/i;
 // often surface in the window title (the switchCompany URL shows there), so
 // extractSignals reads title too. Require >=12 digits so cid=1 noise is ignored.
 const QBO_REALM_RE = /[?&](?:realmid|companyid|cid)=(\d{12,})/i;
+// Review Tracker names the client on every project page; the URL carries the
+// project id (notes.ashfordsky.com/projects/503), which maps to exactly one client.
+const REVIEW_PROJECT_RE = /notes\.ashfordsky\.com\/projects\/(\d+)/i;
 
 function firstMatch(re: RegExp, ...inputs: Array<string | null | undefined>): string | null {
   for (const input of inputs) {
@@ -64,6 +68,7 @@ export function extractSignals(interval: Interval): Signals {
     driveFolderId: firstMatch(DRIVE_FOLDER_RE, url, title),
     fcId: firstMatch(FC_RE, url, title) ?? firstMatch(FC_CLIENT_PARAM_RE, url, title),
     qboRealm: firstMatch(QBO_REALM_RE, url, title),
+    reviewProjectId: firstMatch(REVIEW_PROJECT_RE, url, title),
   };
 }
 

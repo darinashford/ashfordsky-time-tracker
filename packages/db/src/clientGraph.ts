@@ -71,6 +71,7 @@ export async function loadClientGraph(
     byCchId: new Map(),
     byFinancialCentsId: new Map(),
     byQboRealm: new Map(),
+    byReviewProject: new Map(),
     folders: [],
     names: [],
     emailSubjects: new Map(),
@@ -173,6 +174,21 @@ export async function loadClientGraph(
       default:
         break;
     }
+  }
+
+  // ---- Review Tracker projects (notes.ashfordsky.com/projects/{id}) ---------
+  // The tracker lives in this same database and names its client on every
+  // project, so join it straight through: a project Keith adds there attributes
+  // his review time to that client with no sync step.
+  const projects = await pool.query(
+    `select tp.id::text as project_id, c.id as client_id
+       from public.tax_projects tp
+       join public.clients c on lower(c.name) = lower(tp.client_name)`,
+  );
+  for (const r of projects.rows as Array<Record<string, unknown>>) {
+    const clientId = r.client_id as string;
+    if (!graph.clients.has(clientId) || internalClientIds.has(clientId)) continue;
+    graph.byReviewProject.set(r.project_id as string, clientId);
   }
 
   // ---- source_system_links (client-level external identifiers) --------------

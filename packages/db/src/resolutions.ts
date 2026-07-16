@@ -123,6 +123,27 @@ export async function resolveReview(
   );
 }
 
+/**
+ * Remove an interval's resolution and its review-queue + audit rows. Used when a
+ * block becomes "away" idle (machine slept, long idle off a call) and must carry
+ * no billable/non-billable attribution — otherwise a block that used to be active
+ * would keep its old resolution after flipping to idle. Callers guard manual rows.
+ */
+export async function deleteResolution(
+  pool: pg.Pool,
+  schema: string,
+  intervalId: string,
+): Promise<void> {
+  const s = validIdent(schema);
+  // One round-trip: audit + review_queue + resolution for this interval.
+  await pool.query(
+    `with a as (delete from ${s}.resolution_audit where interval_id = $1),
+          r as (delete from ${s}.review_queue where interval_id = $1)
+     delete from ${s}.resolutions where interval_id = $1`,
+    [intervalId],
+  );
+}
+
 /** Append a rolling current-client anchor (auditable context history). */
 export async function appendAnchor(
   pool: pg.Pool,

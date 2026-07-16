@@ -91,6 +91,7 @@ function reasonOf(r: TimelineRowVM): { key: string; label: string } {
   if (t.includes('email')) return { key: 'email', label: 'An email tied to this client was on screen' };
   if (t.includes('sheet') || t.includes('excel') || t.includes('folder'))
     return { key: 'file', label: 'Working in a file or folder mapped to this client' };
+  if (t === 'review_tracker') return { key: 'review', label: 'Reviewing this client’s return in the Review Tracker' };
   if (t.includes('cch') || t.includes('qbo') || t.includes('financial'))
     return { key: 'system', label: 'In their accounting system (CCH / QBO / Financial Cents)' };
   if (t.includes('ocr')) return { key: 'ocr', label: 'The screenshot text identified this client' };

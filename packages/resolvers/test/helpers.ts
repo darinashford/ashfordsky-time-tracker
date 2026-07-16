@@ -12,6 +12,7 @@ export function emptyGraph(): ClientGraph {
     byCchId: new Map(),
     byFinancialCentsId: new Map(),
     byQboRealm: new Map(),
+    byReviewProject: new Map(),
     folders: [],
     names: [],
     emailSubjects: new Map(),

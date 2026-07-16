@@ -16,6 +16,7 @@ import {
   nameInTitleResolver,
   ocrResolver,
   qboResolver,
+  reviewTrackerResolver,
   ruleResolver,
 } from './resolvers';
 
@@ -32,6 +33,7 @@ export const DEFAULT_RESOLVERS: Resolver[] = [
   emailResolver,
   qboResolver,
   financialCentsResolver,
+  reviewTrackerResolver,
   excelResolver,
   browserResolver,
   aiChatResolver,

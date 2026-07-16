@@ -1,4 +1,4 @@
-import { normalizeText, parseHost, stripMailChrome } from './text';
+import { normalizeDomain, normalizeText, parseHost, stripMailChrome } from './text';
 
 export type CategoryTier = 'hard' | 'firm' | 'soft';
 
@@ -129,10 +129,12 @@ const BUCKETS: BucketDef[] = [
   {
     // The firm's own internal software/AI platforms + the infra used to build
     // them (Supabase/Railway host this time tracker) — never a client's books.
+    // NOTE: notes.ashfordsky.com (Review Tracker) is deliberately NOT here — its
+    // project pages are real client work; see isReviewTrackerAdminPage below.
     key: 'firm_tooling',
     tier: 'hard',
     hosts: [
-      'brain.ashfordsky.com', 'time.ashfordsky.com', 'notes.ashfordsky.com',
+      'brain.ashfordsky.com', 'time.ashfordsky.com',
       'supabase.com', 'supabase.io', 'railway.com', 'railway.app',
     ],
     titles: ['ashford agentos', 'quickbooks connector'],
@@ -221,6 +223,29 @@ export interface CategorizeInput {
  * client's work. Excludes a specific client's pages (/clients/{id}, /project/…,
  * which the FC resolver bills to the client), so this never hides billable time.
  */
+/**
+ * A cross-client Review Tracker surface (its dashboard / project list / client
+ * list / feedback) — firm overhead. A specific project page (/projects/{id})
+ * is one client's return review, which the review_tracker resolver bills to that
+ * client, so it is excluded here and never hidden as firm tooling.
+ */
+export function isReviewTrackerAdminPage(url?: string | null, hostFallback?: string | null): boolean {
+  let host = normalizeDomain(hostFallback ?? '');
+  let path = '';
+  if (url) {
+    try {
+      const u = new URL(url);
+      host = u.hostname.replace(/^www\./, '');
+      path = u.pathname.replace(/\/+$/, '') || '/';
+    } catch {
+      /* not a URL — fall back to the captured host */
+    }
+  }
+  if (host !== 'notes.ashfordsky.com') return false;
+  if (/^\/projects\/\d+/.test(path)) return false; // a specific client's project
+  return true; // dashboard / lists / feedback, or no path captured
+}
+
 export function isFinancialCentsAdminPage(url?: string | null): boolean {
   if (!url) return false;
   let host = '';
@@ -274,6 +299,12 @@ export function categorizeActivity(input: CategorizeInput, opts: CategorizeOptio
   // project/task/client page still bills to that client via the FC resolver.
   if (isFinancialCentsAdminPage(input.url)) {
     return { key: 'firm_admin', label: categoryLabel('firm_admin'), tier: 'firm' };
+  }
+
+  // Cross-client Review Tracker navigation — firm tooling. 'firm' tier so a real
+  // client signal still wins; a specific project page isn't matched here at all.
+  if (isReviewTrackerAdminPage(input.url, input.host)) {
+    return { key: 'firm_tooling', label: categoryLabel('firm_tooling'), tier: 'firm' };
   }
 
   // Firm-internal staff meeting: a meeting app whose title names another staff

@@ -167,6 +167,23 @@ describe("a client's own name beats another client's alias (no false ambiguity)"
     expect(resolution.status).toBe('suggested');
   });
 
+  it('bills a Review Tracker project page to that project’s client', () => {
+    const g = emptyGraph();
+    addClient(g, 'aga', 'Nimbus Construction LLC');
+    g.byReviewProject.set('503', 'aga');
+    const { resolution } = runResolvers(
+      interval({
+        app: 'chrome.exe',
+        windowTitle: 'Review Note Tracker - Google Chrome',
+        url: 'https://notes.ashfordsky.com/projects/503',
+      }),
+      ctx(g),
+    );
+    expect(resolution.clientId).toBe('aga');
+    expect(resolution.resolverType).toBe('review_tracker');
+    expect(resolution.status).toBe('auto_finalized');
+  });
+
   it('matches a formal first name to a nickname client (William -> Bill)', () => {
     const g = emptyGraph();
     addClient(g, 'g', 'Bill and Rachel Thornbury');

@@ -39,6 +39,7 @@ export const RESOLVER_TYPES = [
   'email_subject',
   'qbo',
   'financial_cents',
+  'review_tracker',
   'excel_path',
   'ai_chat',
   'browser_url',
@@ -181,6 +182,9 @@ export interface ClientGraph {
   byCchId: Map<string, string>;
   byFinancialCentsId: Map<string, string>;
   byQboRealm: Map<string, string>;
+  // Review Tracker (notes.ashfordsky.com) project id -> client. Built live from
+  // public.tax_projects, so a project added there attributes without any sync.
+  byReviewProject: Map<string, string>;
 
   // prefix-matched folder maps
   folders: FolderMapping[];
