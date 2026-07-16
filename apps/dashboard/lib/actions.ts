@@ -62,6 +62,118 @@ export async function confirmAction(fd: FormData): Promise<void> {
   revalidatePath(`/day/${date}`);
 }
 
+// Generic words that shouldn't become a "remember this" rule on their own.
+const LEARN_STOPWORDS = new Set([
+  'inbox', 'google', 'chrome', 'microsoft', 'edge', 'outlook', 'gmail', 'mail',
+  'dashboard', 'invoice', 'invoices', 'return', 'returns', 'workbook', 'summary',
+  'report', 'reports', 'client', 'clients', 'tasks', 'excel', 'sheet', 'sheets',
+  'income', 'individual', 'partnership', 'parent', 'company', 'entity', 'entities',
+  'review', 'note', 'tracker', 'financial', 'cents', 'quickbooks', 'window', 'untitled',
+]);
+// Shared platforms whose host identifies no single client — never learn a host rule there.
+const SHARED_HOSTS = [
+  'missiveapp.com', 'mail.google.com', 'google.com', 'accounts.google.com', 'drive.google.com',
+  'docs.google.com', 'outlook.office.com', 'outlook.office365.com', 'gmail.com', 'proton.me',
+  'financial-cents.com', 'intuit.com', 'qbo.intuit.com', 'accounts.intuit.com', 'chatgpt.com',
+  'claude.ai', 'slack.com', 'notion.so', 'boldsign.com', 'onespan.com', 'gusto.com',
+];
+
+/**
+ * From a corrected block, pick the strongest signal to learn a durable rule so
+ * similar future blocks auto-attribute: a client-specific URL host, else a
+ * distinctive word from the window title. Returns null when nothing is safe to
+ * generalize (then we still keep the one-block correction, just don't learn).
+ */
+function deriveLearnAction(
+  iv: { url: string | null; window_title: string | null },
+  clientId: string,
+): { action: string; payload: Record<string, string> } | null {
+  let host = '';
+  try {
+    if (iv.url) host = new URL(iv.url).hostname.replace(/^www\./, '');
+  } catch {
+    /* not a URL */
+  }
+  if (host && !SHARED_HOSTS.some((s) => host === s || host.endsWith('.' + s))) {
+    return { action: 'map_url', payload: { host, clientId } };
+  }
+  const title = (iv.window_title ?? '').toLowerCase();
+  const token = (title.match(/[a-z]{6,}/g) ?? []).find((w) => !LEARN_STOPWORDS.has(w));
+  if (token) return { action: 'map_missive', payload: { kind: 'label', value: token, clientId } };
+  return null;
+}
+
+/**
+ * Reassign a block to a client straight from Raw Data — and learn it. Sets the
+ * block to that client (confirmed, so re-resolves never overwrite it), records
+ * the correction, and, when the block carries a generalizable signal, creates a
+ * durable rule so the engine attributes similar blocks itself going forward.
+ */
+export async function setClientAction(fd: FormData): Promise<void> {
+  const { pool, schema } = getDb();
+  // A rolled-up cluster sends every block id it covers (comma-separated).
+  const ids = str(fd, 'intervalId').split(',').map((s) => s.trim()).filter(Boolean);
+  const clientId = str(fd, 'clientId');
+  const date = str(fd, 'date');
+  const learn = fd.get('learn') != null;
+  if (!ids.length || !clientId) return;
+
+  const ivq = await pool.query(
+    `select id, hostname, app, window_title, url from ${schema}.intervals where id = any($1::uuid[])`,
+    [ids],
+  );
+  if (!ivq.rows.length) return;
+  const iv = ivq.rows[0] as { hostname: string | null; window_title: string | null; url: string | null };
+
+  // Non-owners may only correct their own machine's blocks.
+  const scope = await getViewerScope();
+  if (!scope.isOwner && scope.selfHost && iv.hostname && iv.hostname !== scope.selfHost) return;
+
+  const clientGroupId = await clientGroup(pool, clientId);
+  for (const row of ivq.rows as Array<{ id: string }>) {
+    const existing = await getResolution(pool, schema, row.id);
+    await upsertResolution(pool, schema, {
+      intervalId: row.id,
+      clientId,
+      clientGroupId,
+      status: 'confirmed',
+      confidence: 1,
+      resolverType: 'manual',
+      isBillable: true,
+      needsReview: false,
+      evidence: { reason: 'You set the client from Raw Data', manual: true },
+      resolverVersion: 'manual',
+    });
+    await resolveReview(pool, schema, row.id);
+    await insertCorrection(pool, schema, {
+      intervalId: row.id,
+      action: 'change_client',
+      oldClientId: existing?.clientId ?? null,
+      newClientId: clientId,
+    });
+  }
+
+  if (learn) {
+    const learned = deriveLearnAction(iv, clientId);
+    const spec = learned ? correctionToRuleSpec({ action: learned.action, clientId, payload: learned.payload }) : null;
+    if (spec) {
+      const ruleId = await upsertRule(pool, schema, {
+        ruleType: spec.ruleType,
+        matchKind: spec.matchKind,
+        pattern: spec.pattern,
+        normalized: spec.normalized,
+        clientId: spec.clientId,
+        sourceSystem: spec.sourceSystem ?? null,
+        confidence: spec.confidence,
+        priority: spec.priority,
+      });
+      await insertCorrection(pool, schema, { intervalId: ids[0]!, action: 'create_rule', newClientId: clientId, createdRuleId: ruleId });
+    }
+  }
+  revalidatePath(`/raw/${date}`);
+  revalidatePath(`/day/${date}`);
+}
+
 export async function nonbillableAction(fd: FormData): Promise<void> {
   const { pool, schema } = getDb();
   const date = str(fd, 'date');

@@ -151,7 +151,7 @@ export default async function DayPage({
         <CoveragePanel coverage={coverage} />
 
         <h2>Per-client summary</h2>
-        <BillingTable rows={summary} nonBillable={nonBillable} idle={{ seconds: idleSeconds, blocks: idleBlocks }} date={date} />
+        <BillingTable rows={summary} nonBillable={nonBillable} idle={{ seconds: idleSeconds, blocks: idleBlocks }} date={date} host={fHost} />
 
         <ManualEntry
           date={date}

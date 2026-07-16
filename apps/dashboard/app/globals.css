@@ -129,6 +129,18 @@ tr.cluster .caret { color: var(--muted); margin-right: 6px; display: inline-bloc
 tr.sub td { background: #fafbfd; }
 tr.sub td:first-child { padding-left: 26px; }
 
+/* Reassign-client control on Raw Data (type-ahead client picker) */
+.reassign-open { background: none; border: 1px dashed var(--border); color: var(--muted); font-size: 11px; padding: 2px 8px; border-radius: 6px; margin-top: 6px; cursor: pointer; }
+.reassign-open:hover { border-color: var(--accent); color: var(--accent); }
+.reassign { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; max-width: 240px; }
+.reassign-box { position: relative; }
+.reassign-input { width: 100%; padding: 4px 8px; font-size: 12px; box-sizing: border-box; }
+.reassign-ac { position: absolute; z-index: 30; left: 0; right: 0; top: 100%; margin: 2px 0 0; padding: 0; list-style: none; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,0.14); max-height: 220px; overflow-y: auto; }
+.reassign-ac li { padding: 6px 10px; font-size: 12px; cursor: pointer; }
+.reassign-ac li:hover { background: #e8effd; color: #1d4ed8; }
+.reassign-learn { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); }
+.reassign-actions { display: flex; gap: 6px; }
+
 /* Month / year picker bubbles on Reporting */
 .bubbles { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
 .bubble { display: inline-block; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel); font-size: 12px; color: var(--text); }

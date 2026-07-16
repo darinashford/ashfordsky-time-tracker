@@ -131,11 +131,15 @@ export function BillingTable({
   nonBillable,
   idle,
   date,
+  host,
 }: {
   rows: DailyClientSummaryRow[];
   nonBillable?: { seconds: number; blocks: number };
   idle?: { seconds: number; blocks: number };
   date: string;
+  /** Whose day this is — carried into the Raw Data drill-down so it opens on the
+   *  same person you were viewing, not the signed-in user's default. */
+  host?: string | null;
 }) {
   // Non-billable is shown as its own row (a pseudo-client), not a column. All
   // non-billable time has no client, so it lives under "(unattributed)" in the
@@ -174,12 +178,14 @@ export function BillingTable({
     blocks: view.reduce((a, v) => a + v.blocks, 0) + nbBlocks + idleBlocks,
   };
 
-  // Drill-down: a summary number → the Raw Data page filtered to that client+bucket.
+  // Drill-down: a summary number → the Raw Data page filtered to that client+bucket,
+  // keeping whose day we're on (?host=) so it doesn't fall back to the viewer's own.
+  const h = host ? `&host=${encodeURIComponent(host)}` : '';
   const link = (clientKey: string, status: string) =>
-    `/raw/${date}?client=${encodeURIComponent(clientKey)}&status=${status}`;
-  const allLink = (status: string) => `/raw/${date}?status=${status}`;
+    `/raw/${date}?client=${encodeURIComponent(clientKey)}&status=${status}${h}`;
+  const allLink = (status: string) => `/raw/${date}?status=${status}${h}`;
   // Clicking a client name → every block for that client (all statuses).
-  const clientLink = (clientKey: string) => `/raw/${date}?client=${encodeURIComponent(clientKey)}`;
+  const clientLink = (clientKey: string) => `/raw/${date}?client=${encodeURIComponent(clientKey)}${h}`;
 
   return (
     <>

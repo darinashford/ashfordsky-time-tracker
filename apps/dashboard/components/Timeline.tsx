@@ -11,6 +11,20 @@ import {
   statusColor,
   statusLabel,
 } from '../lib/format';
+import { setClientAction } from '../lib/actions';
+
+export interface ClientOption {
+  id: string;
+  name: string;
+}
+
+/** When present, each block shows a "set client" control that reassigns it (and
+ *  teaches the engine). Only passed on Raw Data for someone who may edit. */
+export interface EditCtx {
+  clients: ClientOption[];
+  date: string;
+  host: string | null;
+}
 
 export interface TimelineRowVM {
   id: string;
@@ -119,10 +133,12 @@ export function Timeline({
   tz,
   rows,
   initialTab = 'all',
+  edit,
 }: {
   tz: string;
   rows: TimelineRowVM[];
   initialTab?: TabKey;
+  edit?: EditCtx;
 }) {
   const [tab, setTab] = useState<TabKey>(initialTab);
   const [q, setQ] = useState('');
@@ -191,11 +207,13 @@ export function Timeline({
       out.push({
         key,
         label: g.label,
-        clusters: [...byKey.values()],
+        // Biggest chunk first within the group (not chronological).
+        clusters: [...byKey.values()].sort((a, b) => b.seconds - a.seconds),
         seconds: g.rows.reduce((a, x) => a + x.r.durationSeconds, 0),
         blocks: g.rows.length,
       });
     }
+    // Groups: most time at top, least at bottom.
     return out.sort((a, b) => b.seconds - a.seconds);
   }, [visible]);
 
@@ -265,7 +283,7 @@ export function Timeline({
                       </span>
                     </td>
                   </tr>
-                  {isOpen && g.clusters.map((c) => <ClusterBlock key={c.key} cluster={c} tz={tz} />)}
+                  {isOpen && g.clusters.map((c) => <ClusterBlock key={c.key} cluster={c} tz={tz} edit={edit} />)}
                 </Fragment>
               );
             })}
@@ -278,10 +296,10 @@ export function Timeline({
 
 /** One activity line: a lone block renders directly; repeated chunks roll up
  *  into a summary row that expands (capped) to individual blocks on click. */
-const ClusterBlock = memo(function ClusterBlock({ cluster, tz }: { cluster: Cluster; tz: string }) {
+const ClusterBlock = memo(function ClusterBlock({ cluster, tz, edit }: { cluster: Cluster; tz: string; edit?: EditCtx }) {
   const [open, setOpen] = useState(false);
   const [showAll, setShowAll] = useState(false);
-  if (cluster.rows.length === 1) return <BlockRow r={cluster.rows[0]!.r} tz={tz} />;
+  if (cluster.rows.length === 1) return <BlockRow r={cluster.rows[0]!.r} tz={tz} edit={edit} />;
   const first = cluster.rows[0]!.r;
   const last = cluster.rows[cluster.rows.length - 1]!.r;
   const shown = showAll ? cluster.rows : cluster.rows.slice(0, EXPAND_CAP);
@@ -301,9 +319,9 @@ const ClusterBlock = memo(function ClusterBlock({ cluster, tz }: { cluster: Clus
           </div>
           {first.url && <div className="u mono">{first.url}</div>}
         </td>
-        <ClientCell r={first} />
+        <ClientCell r={first} edit={edit} ids={cluster.rows.map((x) => x.r.id)} />
       </tr>
-      {open && shown.map((x) => <BlockRow key={x.r.id} r={x.r} tz={tz} sub />)}
+      {open && shown.map((x) => <BlockRow key={x.r.id} r={x.r} tz={tz} sub edit={edit} />)}
       {open && !showAll && cluster.rows.length > EXPAND_CAP && (
         <tr className="sub">
           <td colSpan={5}>
@@ -317,7 +335,7 @@ const ClusterBlock = memo(function ClusterBlock({ cluster, tz }: { cluster: Clus
   );
 });
 
-const BlockRow = memo(function BlockRow({ r, tz, sub }: { r: TimelineRowVM; tz: string; sub?: boolean }) {
+const BlockRow = memo(function BlockRow({ r, tz, sub, edit }: { r: TimelineRowVM; tz: string; sub?: boolean; edit?: EditCtx }) {
   // Screenshots only surface when one was actually captured (they live on the
   // capture machine, so there's no image to embed here — just the fact of it,
   // whose OCR text already feeds the "why").
@@ -341,7 +359,7 @@ const BlockRow = memo(function BlockRow({ r, tz, sub }: { r: TimelineRowVM; tz: 
         {r.url && <div className="u mono">{r.url}</div>}
         {(r.resolverType || r.evidence) && <Why r={r} />}
       </td>
-      <ClientCell r={r} />
+      <ClientCell r={r} edit={edit} ids={[r.id]} />
     </tr>
   );
 });
@@ -368,7 +386,7 @@ function Why({ r }: { r: TimelineRowVM }) {
   );
 }
 
-function ClientCell({ r }: { r: TimelineRowVM }) {
+function ClientCell({ r, edit, ids }: { r: TimelineRowVM; edit?: EditCtx; ids?: string[] }) {
   return (
     <td>
       <span className="badge" style={{ background: statusColor(r.status) }}>
@@ -389,6 +407,69 @@ function ClientCell({ r }: { r: TimelineRowVM }) {
           </div>
         )
       )}
+      {edit && ids && ids.length > 0 && <ClientReassign edit={edit} ids={ids} count={ids.length} />}
     </td>
+  );
+}
+
+/** Type-ahead client picker: reassigns this block (or a whole rolled-up cluster)
+ *  to a client and, by default, teaches the engine so similar blocks follow. */
+function ClientReassign({ edit, ids, count }: { edit: EditCtx; ids: string[]; count: number }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState('');
+  const [sel, setSel] = useState<ClientOption | null>(null);
+
+  const matches = useMemo(() => {
+    const ql = q.trim().toLowerCase();
+    if (!ql) return [];
+    return edit.clients.filter((c) => c.name.toLowerCase().includes(ql)).slice(0, 8);
+  }, [q, edit.clients]);
+
+  if (!open) {
+    return (
+      <button type="button" className="reassign-open" onClick={(e) => { e.stopPropagation(); setOpen(true); }}>
+        set client
+      </button>
+    );
+  }
+  return (
+    <form action={setClientAction} className="reassign" onClick={(e) => e.stopPropagation()}>
+      <input type="hidden" name="intervalId" value={ids.join(',')} />
+      <input type="hidden" name="date" value={edit.date} />
+      {edit.host && <input type="hidden" name="host" value={edit.host} />}
+      <input type="hidden" name="clientId" value={sel?.id ?? ''} />
+      <div className="reassign-box">
+        <input
+          autoFocus
+          className="reassign-input"
+          placeholder="type a client…"
+          value={sel ? sel.name : q}
+          onChange={(e) => {
+            setSel(null);
+            setQ(e.target.value);
+          }}
+        />
+        {!sel && matches.length > 0 && (
+          <ul className="reassign-ac">
+            {matches.map((c) => (
+              <li key={c.id} onMouseDown={() => { setSel(c); setQ(c.name); }}>
+                {c.name}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      <label className="reassign-learn small">
+        <input type="checkbox" name="learn" defaultChecked /> remember
+      </label>
+      <div className="reassign-actions">
+        <button type="submit" className="primary small" disabled={!sel}>
+          save{count > 1 ? ` (${count})` : ''}
+        </button>
+        <button type="button" className="small" onClick={() => { setOpen(false); setSel(null); setQ(''); }}>
+          cancel
+        </button>
+      </div>
+    </form>
   );
 }

@@ -117,7 +117,12 @@ export default async function RawPage({
             <Link href={`/raw/${date}${fHost ? `?host=${encodeURIComponent(fHost)}` : ''}`}>clear filter</Link>
           </p>
         )}
-        <Timeline tz={cfg.timezone} rows={rows} initialTab={initialTab} />
+        <Timeline
+          tz={cfg.timezone}
+          rows={rows}
+          initialTab={initialTab}
+          edit={{ clients, date, host: fHost ?? null }}
+        />
       </>
     );
   } catch (err) {
