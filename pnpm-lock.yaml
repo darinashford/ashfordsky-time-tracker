@@ -129,6 +129,9 @@ importers:
       typescript:
         specifier: ^5.6.2
         version: 5.9.3
+      vitest:
+        specifier: ^2.1.1
+        version: 2.1.9(@types/node@20.19.43)
 
   services/qbo-realm-sync:
     dependencies:

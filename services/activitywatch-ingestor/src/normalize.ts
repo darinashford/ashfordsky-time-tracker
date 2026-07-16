@@ -108,6 +108,24 @@ function mergeKeyOf(c: Candidate): string {
   return `${(c.app ?? '').toLowerCase()}|${stripVolatileTitle(c.title)}|${c.isAfk ? 1 : 0}`;
 }
 
+/**
+ * The Windows lock screen is, by definition, not active time — whatever the afk
+ * feed says. LockApp.exe stays the "focused window" for the whole time a machine
+ * sits locked (and while it sleeps), so without this a locked overnight machine
+ * was recorded as hours of active work.
+ */
+function isLockScreen(app: string | null | undefined): boolean {
+  return /lockapp/i.test(app ?? '');
+}
+
+/**
+ * How far a not-afk reading may carry forward across a silent stretch of the afk
+ * feed. A short silence is a watcher hiccup while you kept working (still active);
+ * a long one means the machine slept or locked, and claiming "active" across it
+ * invents time. Beyond this the rest of the gap is idle.
+ */
+const MAX_ACTIVE_CARRY_MS = 10 * 60_000;
+
 export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions = {}): IntervalInput[] {
   const gap = (opts.mergeGapSeconds ?? 60) * 1000;
   const windows = events.filter((e) => e.eventType === 'window' && e.durationSeconds > 0);
@@ -121,7 +139,9 @@ export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions 
   // lunch), while a gap after an ACTIVE reading = a watcher hiccup while you kept
   // working (still active). A window counts as active only where this timeline
   // says not-afk; everywhere else is idle. No afk data at all (watcher missing) ->
-  // fall back to active so it can't zero out a day.
+  // fall back to active so it can't zero out a day. An ACTIVE reading only carries
+  // MAX_ACTIVE_CARRY_MS into the gap, so a machine that slept/locked right after an
+  // active reading can't claim the whole silence as work.
   const afkEvents = events
     .filter((e) => e.eventType === 'afk' && e.durationSeconds > 0)
     .map((e) => ({ s: ms(e.timestamp), e: ms(e.timestamp) + e.durationSeconds * 1000, afk: !!e.afk }))
@@ -131,8 +151,12 @@ export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions 
   for (let i = 0; i < afkEvents.length; i++) {
     const curEv = afkEvents[i]!;
     const nextEv = afkEvents[i + 1];
-    // Extend this reading to the next reading's start so the gap inherits its state.
-    const spanEnd = nextEv ? Math.max(curEv.e, nextEv.s) : curEv.e;
+    // Extend this reading to the next reading's start so the gap inherits its
+    // state — but an active reading only bridges a short silence (see
+    // MAX_ACTIVE_CARRY_MS); past that the machine was asleep, not working.
+    const spanEnd = nextEv
+      ? Math.max(curEv.e, Math.min(nextEv.s, curEv.e + MAX_ACTIVE_CARRY_MS))
+      : curEv.e;
     if (!curEv.afk) activeRanges.push({ s: curEv.s, e: spanEnd });
   }
   const activeSpans = mergeRanges(activeRanges);
@@ -185,6 +209,8 @@ export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions 
         if (segs.length === 0) segs.push({ s: start, e: end, afk: true });
       }
 
+      // A locked screen is never active, whatever the afk feed carried across.
+      const locked = isLockScreen(w.app);
       return segs.map((sg) => ({
         start: sg.s,
         end: sg.e,
@@ -192,7 +218,7 @@ export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions 
         title,
         url,
         browser,
-        isAfk: sg.afk,
+        isAfk: sg.afk || locked,
         hostname: w.hostname ?? null,
         source: w.source,
       }));
