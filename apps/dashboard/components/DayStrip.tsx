@@ -1,3 +1,5 @@
+import { secondsToHours } from '@tt/shared';
+
 /**
  * "When did they work" strips, color-coded —
  *   green  = billable client time (any client-attributed block, incl. Uncertain)
@@ -257,8 +259,15 @@ function DayColumn({
   width: number;
 }) {
   const segments = daySegments(rows, day, tz, awayCutoffSeconds);
+  // Total active (non-idle) hours worked that day — matches the "Active" metric
+  // (all non-AFK time), computed from the rows, not the 5-min-binned segments.
+  const activeSeconds = rows.reduce((a, r) => (r.isAfk ? a : a + r.durationSeconds), 0);
+  const tip = `${label}${sublabel ? ` ${sublabel}` : ''} — ${secondsToHours(activeSeconds).toFixed(2)}h active`;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width, flex: '0 0 auto' }}>
+    <div
+      title={tip}
+      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width, flex: '0 0 auto' }}
+    >
       <div
         style={{
           position: 'relative',
@@ -272,7 +281,6 @@ function DayColumn({
         {segments.map((s, i) => (
           <span
             key={i}
-            title={`${label}: ${fmtMin(binToMin(s.from))}–${fmtMin(binToMin(s.to))} · ${LABEL[s.cat]}`}
             style={{
               position: 'absolute',
               top: `${pctOfDay(s.from)}%`,
