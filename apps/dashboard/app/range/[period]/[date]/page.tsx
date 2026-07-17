@@ -5,7 +5,6 @@ import {
   getHosts,
   getRangeActiveSeconds,
   getRangeClientSummary,
-  getRangeIdleSeconds,
   getRangeStripRows,
   type StripRow,
 } from '@tt/db';
@@ -231,15 +230,15 @@ export default async function RangePage({
   try {
     // The workday strip is per-day; year would be 365 columns, so skip it there.
     const wantStrip = period !== 'year';
-    const [rows, activeSeconds, idleSeconds, stripRows] = await Promise.all([
+    const [rows, activeSeconds, stripRows] = await Promise.all([
       getRangeClientSummary(pool, schema, range.start, range.end, fHost),
       getRangeActiveSeconds(pool, schema, range.start, range.end, fHost),
-      getRangeIdleSeconds(pool, schema, range.start, range.end, cfg.timezone, cfg.awayCutoffSeconds, fHost),
       wantStrip
         ? getRangeStripRows(pool, schema, range.start, range.end, cfg.timezone, fHost)
         : Promise.resolve([] as StripRow[]),
     ]);
-    const totalOnComputer = activeSeconds + idleSeconds;
+    // Worked = all active (non-away) time. Idle / away / locked is excluded upstream.
+    const worked = activeSeconds;
     const nullRow = rows.find((r) => !r.clientId);
     const clients = rows.filter((r) => r.clientId).sort((a, b) => b.totalSeconds - a.totalSeconds);
 
@@ -250,7 +249,6 @@ export default async function RangePage({
     const nonbillable = nullRow?.nonbillableSeconds ?? 0;
     const unattributed = Math.max(0, (nullRow?.totalSeconds ?? 0) - nonbillable);
     const grand = clientTotal + (nullRow?.totalSeconds ?? 0);
-    const pctBillable = grand ? Math.round((billable / grand) * 100) : 0;
     const maxTotal = clients[0]?.totalSeconds ?? 1;
     const w = (sec: number, denom: number) => `${denom ? (sec / denom) * 100 : 0}%`;
 
@@ -298,14 +296,6 @@ export default async function RangePage({
         {workday}
         <div className="cards">
           <div className="card">
-            <div className="k">Total on computer</div>
-            <div className="v">{hrs(totalOnComputer)}</div>
-          </div>
-          <div className="card">
-            <div className="k">Active</div>
-            <div className="v">{hrs(activeSeconds)}</div>
-          </div>
-          <div className="card">
             <div className="k">Billable</div>
             <div className="v" style={{ color: C.billable }}>{hrs(billable)}</div>
           </div>
@@ -314,8 +304,8 @@ export default async function RangePage({
             <div className="v" style={{ color: C.nonbillable }}>{hrs(nonbillable)}</div>
           </div>
           <div className="card">
-            <div className="k">% billable</div>
-            <div className="v">{pctBillable}%</div>
+            <div className="k">Worked</div>
+            <div className="v">{hrs(worked)}</div>
           </div>
         </div>
 
