@@ -2,11 +2,12 @@ import type { ReactNode } from 'react';
 import Link from 'next/link';
 import { localDate } from '@tt/shared';
 import { getDayTimeline, getHosts, getScreenshotActivity } from '@tt/db';
-import { getDb, listClientOptions } from '../../../lib/db';
+import { getDb, listClientOptions, listRules } from '../../../lib/db';
 import { getViewerScope } from '../../../lib/viewer';
 import { Timeline, type TabKey, type TimelineRowVM } from '../../../components/Timeline';
 import { DateJump } from '../../../components/DateJump';
 import { HowItWorks, LabelsHelp } from '../../../components/RawHelp';
+import { RulesTable } from '../../../components/RulesTable';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const TAB_KEYS = new Set(['auto', 'suggested', 'needs_review', 'unresolved', 'nonbillable']);
@@ -29,13 +30,16 @@ export default async function RawPage({
 }) {
   const { pool, schema, cfg } = getDb();
   const date = DATE_RE.test(params.date) ? params.date : localDate(new Date().toISOString(), cfg.timezone);
-  const view = searchParams.view === 'labels' || searchParams.view === 'how' ? searchParams.view : 'blocks';
+  const reqView = searchParams.view;
+  let view: 'blocks' | 'labels' | 'how' | 'rules' =
+    reqView === 'labels' || reqView === 'how' || reqView === 'rules' ? reqView : 'blocks';
   const fClient = typeof searchParams.client === 'string' ? searchParams.client : undefined;
   const fStatus = typeof searchParams.status === 'string' ? searchParams.status : undefined;
   // Defaults to the signed-in person's own machine. The owner alone may switch
   // via the "Whose time" bar (a person, or Everyone = ?host=all); a non-owner
   // is pinned to self and any ?host= they pass is ignored.
   const scope = await getViewerScope();
+  if (view === 'rules' && !scope.isOwner) view = 'blocks'; // Rules audit is owner-only
   const qHost = typeof searchParams.host === 'string' && searchParams.host ? searchParams.host : undefined;
   const fHost = scope.isOwner
     ? qHost === 'all'
@@ -53,7 +57,10 @@ export default async function RawPage({
   const q = keepFilters ? `?${keepFilters}` : '';
 
   let content: ReactNode;
-  if (view === 'labels') {
+  if (view === 'rules') {
+    const rules = await listRules().catch(() => []);
+    content = <RulesTable rows={rules} canEdit={scope.isOwner} />;
+  } else if (view === 'labels') {
     content = <LabelsHelp />;
   } else if (view === 'how') {
     const shots = await getScreenshotActivity(pool, schema).catch(() => null);
@@ -172,6 +179,11 @@ export default async function RawPage({
         <Link className={`tab${view === 'how' ? ' active' : ''}`} href={`/raw/${date}?view=how`}>
           How this works
         </Link>
+        {scope.isOwner && (
+          <Link className={`tab${view === 'rules' ? ' active' : ''}`} href={`/raw/${date}?view=rules`}>
+            Rules created
+          </Link>
+        )}
       </div>
       {content}
     </>

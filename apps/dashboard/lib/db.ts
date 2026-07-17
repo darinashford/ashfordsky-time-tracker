@@ -100,6 +100,45 @@ export async function listPeople(): Promise<PersonRow[]> {
   return res.rows as PersonRow[];
 }
 
+export interface RuleRow {
+  id: string;
+  ruleType: string;
+  matchKind: string;
+  pattern: string;
+  clientName: string | null;
+  enabled: boolean;
+  createdAt: string | null;
+  createdBy: string | null; // who ran "set client · remember"
+  fromHost: string | null; // whose block it was learned from
+  blocksHit: number; // blocks currently attributed by this rule
+}
+
+/**
+ * Every attribution rule, newest first — the audit for what "set client ·
+ * remember" has taught the engine. Joins the correction that created each rule
+ * for who/when, and counts how many blocks it currently attributes (a big
+ * number on a vague pattern is the tell for a bad rule).
+ */
+export async function listRules(): Promise<RuleRow[]> {
+  const { pool, schema } = getDb();
+  const res = await pool.query(
+    `select r.id, r.rule_type as "ruleType", r.match_kind as "matchKind", r.pattern,
+            c.name as "clientName", r.enabled, r.created_at as "createdAt",
+            co.created_by as "createdBy",
+            (select i.hostname from ${schema}.intervals i where i.id = co.interval_id) as "fromHost",
+            (select count(*)::int from ${schema}.resolutions res
+               where res.resolver_type = 'rule' and res.evidence->>'ruleId' = r.id::text) as "blocksHit"
+       from ${schema}.attribution_rules r
+       left join public.clients c on c.id = r.client_id
+       left join lateral (
+         select created_by, interval_id from ${schema}.corrections
+          where created_rule_id = r.id order by created_at desc limit 1
+       ) co on true
+      order by r.enabled desc, r.created_at desc nulls last`,
+  );
+  return res.rows as RuleRow[];
+}
+
 /** Manually-logged blocks (source='manual') for a local day, for the Today list. */
 export async function listManualEntries(date: string, host?: string | null): Promise<ManualEntryRow[]> {
   const { pool, schema, cfg } = getDb();

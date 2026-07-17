@@ -447,6 +447,18 @@ export async function mintTokenAction(_prev: MintTokenState, fd: FormData): Prom
   return { ok: true, host, token };
 }
 
+/** Enable/disable an attribution rule from the Rules audit (owner-only). A
+ *  disabled rule stops matching on the next resolve; nothing is deleted. */
+export async function toggleRuleAction(fd: FormData): Promise<void> {
+  if (!(await getViewerScope()).isOwner) return;
+  const { pool, schema } = getDb();
+  const ruleId = str(fd, 'ruleId');
+  const enable = fd.get('enable') != null;
+  if (!ruleId) return;
+  await pool.query(`update ${schema}.attribution_rules set enabled = $2 where id = $1`, [ruleId, enable]);
+  revalidatePath('/raw', 'layout');
+}
+
 /** Revoke a person's sync token — their agent stops being able to send time. */
 export async function revokeTokenAction(fd: FormData): Promise<void> {
   if (!(await getViewerScope()).isOwner) return;
