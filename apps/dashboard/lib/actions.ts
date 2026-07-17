@@ -456,7 +456,7 @@ export async function toggleRuleAction(fd: FormData): Promise<void> {
   const enable = fd.get('enable') != null;
   if (!ruleId) return;
   await pool.query(`update ${schema}.attribution_rules set enabled = $2 where id = $1`, [ruleId, enable]);
-  revalidatePath('/raw', 'layout');
+  revalidatePath('/rules');
 }
 
 /** Revoke a person's sync token — their agent stops being able to send time. */

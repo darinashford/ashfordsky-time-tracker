@@ -7,16 +7,19 @@ import { usePathname } from 'next/navigation';
 // falls back to the current local day server-side, so these links always land
 // on the live day without the sidebar needing to know the date.
 const NAV = [
-  { href: '/day/today', prefix: '/day', ico: '📅', label: 'Today' },
-  { href: '/range/week/today', prefix: '/range', ico: '📊', label: 'Reporting' },
-  { href: '/raw/today', prefix: '/raw', ico: '🗂️', label: 'Raw Data' },
-  { href: '/settings', prefix: '/settings', ico: '⚙️', label: 'Settings' },
-  { href: '/how', prefix: '/how', ico: '❓', label: 'How this works' },
+  { href: '/day/today', prefix: '/day', ico: '📅', label: 'Today', ownerOnly: false },
+  { href: '/range/week/today', prefix: '/range', ico: '📊', label: 'Reporting', ownerOnly: false },
+  { href: '/raw/today', prefix: '/raw', ico: '🗂️', label: 'Raw Data', ownerOnly: false },
+  { href: '/rules', prefix: '/rules', ico: '📏', label: 'Manual Rules', ownerOnly: true },
+  { href: '/settings', prefix: '/settings', ico: '⚙️', label: 'Settings', ownerOnly: true },
+  { href: '/how', prefix: '/how', ico: '❓', label: 'How this works', ownerOnly: false },
 ];
 
+// showSettings doubles as the "is owner" flag (owner-only items are hidden for
+// teammates): Manual Rules and Settings both cover the whole firm.
 export function Sidebar({ showSettings = true }: { showSettings?: boolean }) {
   const pathname = usePathname() ?? '';
-  const nav = showSettings ? NAV : NAV.filter((n) => n.prefix !== '/settings');
+  const nav = showSettings ? NAV : NAV.filter((n) => !n.ownerOnly);
   return (
     <nav className="sidebar">
       <div className="brand">
