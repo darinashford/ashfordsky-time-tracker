@@ -1,5 +1,6 @@
 import type { RuleRow } from '../lib/db';
 import { toggleRuleAction } from '../lib/actions';
+import { ruleRisk } from '../lib/learn';
 
 /** Plain-English description of what a rule matches on. */
 function describe(r: RuleRow): string {
@@ -39,11 +40,29 @@ export function RulesTable({ rows, canEdit }: { rows: RuleRow[]; canEdit: boolea
   if (rows.length === 0) {
     return <p className="muted small">No rules yet. Rules appear here when someone uses “set client” with “remember” on.</p>;
   }
+  // Surface likely-bad rules first: an enabled rule with a risky pattern, then
+  // by how many blocks it's claiming. Disabled rules sink to the bottom.
+  const ranked = [...rows]
+    .map((r) => ({ r, risk: r.enabled ? ruleRisk(r.ruleType, r.pattern) : null }))
+    .sort((a, b) => {
+      if (a.r.enabled !== b.r.enabled) return a.r.enabled ? -1 : 1;
+      const ar = a.risk ? 1 : 0;
+      const br = b.risk ? 1 : 0;
+      if (ar !== br) return br - ar;
+      return b.r.blocksHit - a.r.blocksHit;
+    });
+  const flagged = ranked.filter((x) => x.risk).length;
   return (
     <>
       <p className="small muted" style={{ marginTop: 0 }}>
         Every rule taught by “set client · remember”. A rule with a vague pattern claiming a lot of blocks is
         usually a mistake — disable it here (nothing is deleted; it just stops matching on the next resolve).
+        {flagged > 0 && (
+          <>
+            {' '}
+            <strong style={{ color: '#c0392b' }}>{flagged} look over-broad</strong> and are pulled to the top.
+          </>
+        )}
       </p>
       <table>
         <thead>
@@ -57,11 +76,14 @@ export function RulesTable({ rows, canEdit }: { rows: RuleRow[]; canEdit: boolea
           </tr>
         </thead>
         <tbody>
-          {rows.map((r) => (
+          {ranked.map(({ r, risk }) => (
             <tr key={r.id} style={r.enabled ? undefined : { opacity: 0.5 }}>
               <td>
                 {describe(r)}
                 {!r.enabled && <span className="badge" style={{ marginLeft: 6, background: '#eef0f2', color: '#566573' }}>off</span>}
+                {risk && (
+                  <div className="small" style={{ color: '#c0392b', marginTop: 2 }}>⚠ looks over-broad — {risk}</div>
+                )}
               </td>
               <td>{r.clientName ?? <span className="muted">—</span>}</td>
               <td className="small">

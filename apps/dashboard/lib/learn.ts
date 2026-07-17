@@ -46,6 +46,10 @@ const LEARN_STOPWORDS = new Set([
 
 // Shared platforms whose host identifies no single client — never learn a host rule there.
 const SHARED_HOSTS = [
+  // The firm's OWN sites: the tracker, the review tool, the profitability app,
+  // the brain. These serve every client, so a host rule here mis-bills all of it
+  // to one client (this is how time/notes.ashfordsky.com got pinned to Bullhorn).
+  'ashfordsky.com',
   'missiveapp.com', 'mail.google.com', 'google.com', 'accounts.google.com', 'drive.google.com',
   'docs.google.com', 'outlook.office.com', 'outlook.office365.com', 'gmail.com', 'proton.me',
   'financial-cents.com', 'intuit.com', 'qbo.intuit.com', 'accounts.intuit.com', 'chatgpt.com',
@@ -79,4 +83,28 @@ export function describeLearn(url: string | null, title: string | null): string 
   const d = deriveLearn(url, title);
   if (!d) return null;
   return d.kind === 'host' ? `the website ${d.value}` : `windows with “${d.value}” in the title`;
+}
+
+/**
+ * Why an existing rule looks over-broad, or null if it looks sound. Same lists
+ * as the learner, so the audit view flags exactly what the learner now refuses
+ * to create: a firm/shared host, or a single common word. Older rules made
+ * before those guards still get surfaced here for a human to disable.
+ */
+export function ruleRisk(ruleType: string, pattern: string): string | null {
+  const p = (pattern ?? '').trim().toLowerCase();
+  if (!p) return null;
+  if (ruleType === 'url_host') {
+    if (SHARED_HOSTS.some((s) => p === s || p.endsWith('.' + s))) {
+      return 'a firm or shared site — it serves every client, not one';
+    }
+    return null;
+  }
+  if (ruleType === 'title_pattern') {
+    const tokens = p.split(/\s+/).filter(Boolean);
+    if (tokens.length === 1 && (p.length < 5 || LEARN_STOPWORDS.has(p))) {
+      return 'a single common word — it matches many unrelated windows';
+    }
+  }
+  return null;
 }
