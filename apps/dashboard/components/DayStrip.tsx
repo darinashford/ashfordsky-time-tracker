@@ -1,4 +1,5 @@
 import { secondsToHours } from '@tt/shared';
+import { WorkdayColumnsView, type PreparedDay, type PreparedTick } from './WorkdayColumnsView';
 
 /**
  * "When did they work" strips, color-coded —
@@ -152,7 +153,7 @@ export function DayStrip({
 }) {
   const segments = daySegments(rows, day, tz);
   const ticks: number[] = [];
-  for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += 120) ticks.push(m);
+  for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += 60) ticks.push(m); // every hour
 
   return (
     <div style={{ margin: '4px 0 2px' }}>
@@ -201,68 +202,10 @@ export function DayStrip({
   );
 }
 
-/** One vertical day column: 6a at the top → 1a at the bottom, filled by segment. */
-function DayColumn({
-  rows,
-  day,
-  label,
-  sublabel,
-  tz,
-  height,
-  width,
-}: {
-  rows: StripInput[];
-  day: string;
-  label: string;
-  sublabel?: string;
-  tz: string;
-  height: number;
-  width: number;
-}) {
-  const segments = daySegments(rows, day, tz);
-  // Total worked (non-AFK) hours that day — matches the "Worked" metric, computed
-  // from the rows, not the 5-min-binned segments.
-  const workedSeconds = rows.reduce((a, r) => (r.isAfk ? a : a + r.durationSeconds), 0);
-  const tip = `${label}${sublabel ? ` ${sublabel}` : ''} — ${secondsToHours(workedSeconds).toFixed(2)}h worked`;
-  return (
-    <div
-      title={tip}
-      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width, flex: '0 0 auto' }}
-    >
-      <div
-        style={{
-          position: 'relative',
-          width: '100%',
-          height,
-          borderRadius: 5,
-          background: 'rgba(150,158,168,0.18)',
-          overflow: 'hidden',
-        }}
-      >
-        {segments.map((s, i) => (
-          <span
-            key={i}
-            style={{
-              position: 'absolute',
-              top: `${pctOfDay(s.from)}%`,
-              height: `${pctOfDay(s.to - s.from)}%`,
-              left: 0,
-              right: 0,
-              background: COLOR[s.cat],
-            }}
-          />
-        ))}
-      </div>
-      <div className="muted" style={{ fontSize: 10, marginTop: 3, textAlign: 'center', lineHeight: 1.2 }}>
-        <div style={{ fontWeight: 600 }}>{label}</div>
-        {sublabel && <div>{sublabel}</div>}
-      </div>
-    </div>
-  );
-}
-
 /** Multi-day "when did they work" view: one vertical bar per day. Used on
- *  Reporting for week/month. Time axis (6a→1a) runs down the left. */
+ *  Reporting for week/month. Heavy per-day work (binning) happens here on the
+ *  server; the interactive shell (click-to-show worked-hours popup) is the small
+ *  client component WorkdayColumnsView. Time axis (6a→1a) runs down the left. */
 export function WorkdayColumns({
   days,
   tz,
@@ -274,44 +217,30 @@ export function WorkdayColumns({
   height?: number;
   colWidth?: number;
 }) {
-  const ticks: number[] = [];
-  for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += 180) ticks.push(m); // every 3h
+  const span = DAY_END_MIN - DAY_START_MIN;
+  const ticks: PreparedTick[] = [];
+  for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += 120) {
+    ticks.push({ label: fmtMin(m), topPct: ((m - DAY_START_MIN) / span) * 100 }); // every 2h
+  }
+  const prepared: PreparedDay[] = days.map((d) => {
+    const segments = daySegments(d.rows, d.day, tz);
+    // Total worked (non-AFK) hours that day — matches the "Worked" metric,
+    // computed from the rows, not the 5-min-binned segments.
+    const workedSeconds = d.rows.reduce((a, r) => (r.isAfk ? a : a + r.durationSeconds), 0);
+    return {
+      key: d.day,
+      label: d.label,
+      sublabel: d.sublabel,
+      workedLabel: `${secondsToHours(workedSeconds).toFixed(2)}h`,
+      segments: segments.map((s) => ({
+        topPct: pctOfDay(s.from),
+        heightPct: pctOfDay(s.to - s.from),
+        color: COLOR[s.cat],
+      })),
+    };
+  });
   return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, overflowX: 'auto', paddingBottom: 4 }}>
-      {/* left time axis, aligned to the bar height */}
-      <div style={{ position: 'relative', width: 30, height, flex: '0 0 auto' }}>
-        {ticks.map((m) => (
-          <span
-            key={m}
-            className="muted"
-            style={{
-              position: 'absolute',
-              top: `${((m - DAY_START_MIN) / (DAY_END_MIN - DAY_START_MIN)) * 100}%`,
-              right: 2,
-              transform: 'translateY(-50%)',
-              fontSize: 10,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {fmtMin(m)}
-          </span>
-        ))}
-      </div>
-      <div style={{ display: 'flex', gap: 4 }}>
-        {days.map((d) => (
-          <DayColumn
-            key={d.day}
-            rows={d.rows}
-            day={d.day}
-            label={d.label}
-            sublabel={d.sublabel}
-            tz={tz}
-            height={height}
-            width={colWidth}
-          />
-        ))}
-      </div>
-    </div>
+    <WorkdayColumnsView days={prepared} ticks={ticks} height={height} colWidth={colWidth} colGap={4} axisWidth={30} />
   );
 }
 
