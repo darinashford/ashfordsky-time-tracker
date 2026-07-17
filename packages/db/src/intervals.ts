@@ -166,12 +166,18 @@ export async function clearIngestRange(
 }
 
 /**
- * Incremental-ingest sweep: drop only the machine intervals for today that are
- * NO LONGER produced by the current merge (their dedupe_key isn't in keepKeys) —
- * e.g. a run that split/merged differently. Everything still present is left in
- * place by the upsert, so its resolution survives (no more wiping the whole day's
- * attribution every cycle). Hand/AI-corrected intervals (resolver_version manual
- * or llm) are never swept. Clamped to today onward so past days are untouched.
+ * Incremental-ingest sweep: drop machine intervals in the re-ingested window that
+ * are NO LONGER produced by the current merge (their dedupe_key isn't in keepKeys)
+ * — e.g. a run that split/merged differently, or a block the rolling window now
+ * clips at a different edge (new start → new key), which otherwise leaves the old
+ * copy behind as a duplicate. Everything still produced keeps its key, so the
+ * upsert leaves it in place and its resolution survives. Hand/AI-corrected
+ * intervals (resolver_version manual or llm) are never swept.
+ *
+ * Swept across the WHOLE [since, until] window, not just today: the keep-key guard
+ * means only genuine orphans go, so this self-heals trailing-edge duplicates from
+ * earlier days instead of letting them accumulate (they used to survive because
+ * the sweep was clamped to today).
  */
 export async function pruneIntervalsExcept(
   pool: Queryable,
@@ -183,10 +189,9 @@ export async function pruneIntervalsExcept(
 ): Promise<number> {
   const s = validIdent(schema);
   if (keepKeys.length === 0) return 0; // never sweep everything (empty merge = leave as-is)
-  const lower = `greatest($1::timestamptz, date_trunc('day', now() at time zone 'America/Denver') at time zone 'America/Denver')`;
   const res = await pool.query(
     `delete from ${s}.intervals i
-      where i.start_ts >= ${lower} and i.start_ts < $2::timestamptz
+      where i.start_ts >= $1::timestamptz and i.start_ts < $2::timestamptz
         and ($4::text is null or i.hostname = $4)
         and not (i.dedupe_key = any($3::text[]))
         and not exists (
