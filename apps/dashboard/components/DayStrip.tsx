@@ -3,11 +3,12 @@ import { secondsToHours } from '@tt/shared';
 /**
  * "When did they work" strips, color-coded —
  *   green  = billable client time (any client-attributed block, incl. Uncertain)
- *   slate  = non-billable + unattributed active time
- *   blue   = idle at the desk (short no-input stretches; still on the computer)
- *   track  = translucent gray: not working (away, locked screen, off)
+ *   slate  = non-billable + unattributed worked time
+ *   track  = translucent gray: not worked (idle past the grace, away, locked, off)
  * The day runs 6:00 AM → 1:00 AM (MT), bucketed into 5-minute bins; each bin
  * takes its dominant category so the strip reads as clean runs, not slivers.
+ * Idle is not a category: the resolver promotes real work out of AFK, so any
+ * time still flagged AFK isn't worked and simply reads as a gap.
  *
  * `DayStrip` is the horizontal single-day bar (Today). `WorkdayColumns` is the
  * multi-day version for Reporting: one vertical bar per day, time top→bottom.
@@ -18,17 +19,15 @@ const DAY_END_MIN = 25 * 60; // 1:00 AM next day
 const BIN_MIN = 5;
 const N_BINS = (DAY_END_MIN - DAY_START_MIN) / BIN_MIN;
 
-type Cat = 'billable' | 'nonbillable' | 'idle';
+type Cat = 'billable' | 'nonbillable';
 
 const COLOR: Record<Cat, string> = {
   billable: '#1f8a4c',
   nonbillable: '#566573',
-  idle: '#5b8def',
 };
 const LABEL: Record<Cat, string> = {
   billable: 'Billable',
   nonbillable: 'Non-billable / unattributed',
-  idle: 'Idle (at desk)',
 };
 
 // Any client-attributed block is billable, including low-confidence (needs_review)
@@ -84,54 +83,20 @@ function fmtMin(min: number): string {
   return mm === 0 ? `${h12}${ap}` : `${h12}:${String(mm).padStart(2, '0')}${ap}`;
 }
 
-/** Contiguous AFK runs (chained across ≤2-min gaps): short runs = idle at the
- *  desk; long runs = away (not working). Locked screen is dropped upstream. */
-function idleIdSet(rows: StripInput[], awayCutoffSeconds: number): Set<string> {
-  const afk = rows
-    .filter((r) => r.isAfk && !(r.app ?? '').toLowerCase().includes('lockapp'))
-    .sort((a, b) => Date.parse(a.startTs) - Date.parse(b.startTs));
-  const idleIds = new Set<string>();
-  for (let i = 0; i < afk.length; ) {
-    let j = i;
-    let total = 0;
-    let lastEnd = Date.parse(afk[i]!.startTs);
-    const ids: string[] = [];
-    while (j < afk.length && Date.parse(afk[j]!.startTs) - lastEnd <= 120_000) {
-      total += afk[j]!.durationSeconds;
-      lastEnd = Date.parse(afk[j]!.endTs);
-      ids.push(afk[j]!.id);
-      j++;
-    }
-    if (total <= awayCutoffSeconds) for (const id of ids) idleIds.add(id);
-    i = j;
-  }
-  return idleIds;
-}
-
 /** Bucket one day's rows into 5-min bins, pick each bin's dominant category, and
- *  merge adjacent same-category bins into segments (billable wins ties). */
-export function daySegments(
-  rows: StripInput[],
-  day: string,
-  tz: string,
-  awayCutoffSeconds: number,
-): Segment[] {
-  const idleIds = idleIdSet(rows, awayCutoffSeconds);
+ *  merge adjacent same-category bins into segments (billable wins ties). Only
+ *  worked (non-AFK) time fills the bar; idle/away/locked is left as a gap. */
+export function daySegments(rows: StripInput[], day: string, tz: string): Segment[] {
   const bins: Array<Record<Cat, number>> = Array.from({ length: N_BINS }, () => ({
     billable: 0,
     nonbillable: 0,
-    idle: 0,
   }));
   for (const r of rows) {
-    let cat: Cat;
-    if (r.isAfk) {
-      if (!idleIds.has(r.id)) continue; // away / locked -> gap
-      cat = 'idle';
-    } else if (r.clientId && r.isBillable !== false && BILLABLE_STATUSES.has(r.status ?? '')) {
-      cat = 'billable';
-    } else {
-      cat = 'nonbillable'; // unresolved / no-client, or non-billable buckets
-    }
+    if (r.isAfk) continue; // idle / away / locked -> gap; only worked time fills the bar
+    const cat: Cat =
+      r.clientId && r.isBillable !== false && BILLABLE_STATUSES.has(r.status ?? '')
+        ? 'billable'
+        : 'nonbillable'; // unresolved / no-client, or non-billable buckets
     const s = minutesIntoDay(r.startTs, day, tz);
     const e = s + r.durationSeconds / 60;
     const from = Math.max(s, DAY_START_MIN);
@@ -146,9 +111,9 @@ export function daySegments(
     }
   }
 
-  const PRIORITY: Cat[] = ['billable', 'nonbillable', 'idle'];
+  const PRIORITY: Cat[] = ['billable', 'nonbillable'];
   const binCat: Array<Cat | null> = bins.map((b) => {
-    const total = b.billable + b.nonbillable + b.idle;
+    const total = b.billable + b.nonbillable;
     if (total < 30) return null; // effectively empty -> gap
     let best: Cat = 'billable';
     let bestV = -1;
@@ -179,15 +144,13 @@ export function DayStrip({
   day,
   tz,
   label,
-  awayCutoffSeconds,
 }: {
   rows: StripInput[];
   day: string;
   tz: string;
   label?: string;
-  awayCutoffSeconds: number;
 }) {
-  const segments = daySegments(rows, day, tz, awayCutoffSeconds);
+  const segments = daySegments(rows, day, tz);
   const ticks: number[] = [];
   for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += 120) ticks.push(m);
 
@@ -245,7 +208,6 @@ function DayColumn({
   label,
   sublabel,
   tz,
-  awayCutoffSeconds,
   height,
   width,
 }: {
@@ -254,15 +216,14 @@ function DayColumn({
   label: string;
   sublabel?: string;
   tz: string;
-  awayCutoffSeconds: number;
   height: number;
   width: number;
 }) {
-  const segments = daySegments(rows, day, tz, awayCutoffSeconds);
-  // Total active (non-idle) hours worked that day — matches the "Active" metric
-  // (all non-AFK time), computed from the rows, not the 5-min-binned segments.
-  const activeSeconds = rows.reduce((a, r) => (r.isAfk ? a : a + r.durationSeconds), 0);
-  const tip = `${label}${sublabel ? ` ${sublabel}` : ''} — ${secondsToHours(activeSeconds).toFixed(2)}h active`;
+  const segments = daySegments(rows, day, tz);
+  // Total worked (non-AFK) hours that day — matches the "Worked" metric, computed
+  // from the rows, not the 5-min-binned segments.
+  const workedSeconds = rows.reduce((a, r) => (r.isAfk ? a : a + r.durationSeconds), 0);
+  const tip = `${label}${sublabel ? ` ${sublabel}` : ''} — ${secondsToHours(workedSeconds).toFixed(2)}h worked`;
   return (
     <div
       title={tip}
@@ -305,13 +266,11 @@ function DayColumn({
 export function WorkdayColumns({
   days,
   tz,
-  awayCutoffSeconds,
   height = 240,
   colWidth = 26,
 }: {
   days: Array<{ day: string; rows: StripInput[]; label: string; sublabel?: string }>;
   tz: string;
-  awayCutoffSeconds: number;
   height?: number;
   colWidth?: number;
 }) {
@@ -347,7 +306,6 @@ export function WorkdayColumns({
             label={d.label}
             sublabel={d.sublabel}
             tz={tz}
-            awayCutoffSeconds={awayCutoffSeconds}
             height={height}
             width={colWidth}
           />
@@ -363,8 +321,7 @@ export function DayStripLegend() {
     <div className="legend" style={{ marginTop: 2 }}>
       <span><i style={{ background: COLOR.billable }} />Billable</span>
       <span><i style={{ background: COLOR.nonbillable }} />Non-billable / unattributed</span>
-      <span><i style={{ background: COLOR.idle }} />Idle (at desk)</span>
-      <span><i style={{ background: 'rgba(150,158,168,0.35)' }} />Off / away</span>
+      <span><i style={{ background: 'rgba(150,158,168,0.35)' }} />Not worked / away</span>
     </div>
   );
 }

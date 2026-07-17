@@ -62,9 +62,14 @@ export default async function DayPage({
   // may switch to another person via ?host=; a non-owner is pinned to self and
   // any ?host= they pass is ignored.
   const scope = await getViewerScope();
+  // Default to the signed-in person. The owner may switch to any one person or to
+  // Everyone (?host=all); a non-owner is always pinned to their own machine.
   const requestedHost =
-    typeof searchParams.host === 'string' && searchParams.host ? searchParams.host : undefined;
-  const fHost = (scope.isOwner ? requestedHost : undefined) ?? scope.selfHost ?? undefined;
+    scope.isOwner && typeof searchParams.host === 'string' && searchParams.host
+      ? searchParams.host
+      : undefined;
+  const isEveryone = requestedHost === 'all';
+  const fHost = isEveryone ? undefined : (requestedHost ?? scope.selfHost ?? undefined);
 
   // Block-level drill-downs live on the Raw Data page now; keep old links working.
   if (searchParams.client || searchParams.status) {
@@ -108,17 +113,22 @@ export default async function DayPage({
           <div className="tabs" style={{ margin: '2px 0 10px' }}>
             <span className="muted small" style={{ alignSelf: 'center', marginRight: 2 }}>Whose time:</span>
             {hosts.map((h) => (
-              <Link key={h} className={`tab${fHost === h ? ' active' : ''}`} href={`/day/${date}?host=${encodeURIComponent(h)}`}>
+              <Link key={h} className={`tab${!isEveryone && fHost === h ? ' active' : ''}`} href={`/day/${date}?host=${encodeURIComponent(h)}`}>
                 {h}{h === scope.selfHost ? ' (you)' : ''}
               </Link>
             ))}
+            <Link className={`tab${isEveryone ? ' active' : ''}`} href={`/day/${date}?host=all`}>Everyone</Link>
           </div>
         )}
         <h2 style={{ marginTop: 8 }}>Workday</h2>
-        <DayStrip rows={timeline} day={date} tz={cfg.timezone} awayCutoffSeconds={cfg.awayCutoffSeconds} />
+        <DayStrip rows={timeline} day={date} tz={cfg.timezone} />
         <DayStripLegend />
 
         <div className="cards">
+          <div className="card">
+            <div className="k">Worked</div>
+            <div className="v">{secondsToHours(worked)}h</div>
+          </div>
           <div className="card">
             <div className="k">Billable</div>
             <div className="v">{secondsToHours(billable)}h</div>
@@ -126,10 +136,6 @@ export default async function DayPage({
           <div className="card">
             <div className="k">Non-billable</div>
             <div className="v">{secondsToHours(nonBillable.seconds)}h</div>
-          </div>
-          <div className="card">
-            <div className="k">Worked</div>
-            <div className="v">{secondsToHours(worked)}h</div>
           </div>
         </div>
 

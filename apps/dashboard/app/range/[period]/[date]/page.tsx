@@ -9,6 +9,7 @@ import {
   type StripRow,
 } from '@tt/db';
 import { getDb } from '../../../../lib/db';
+import { getViewerScope } from '../../../../lib/viewer';
 import { DayStrip, DayStripLegend, WorkdayColumns } from '../../../../components/DayStrip';
 
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -210,12 +211,13 @@ export default async function RangePage({
   const range = rangeFor(period, anchor);
   const prev = ymd(addDays(parse(range.start), -1));
   const next = ymd(addDays(parse(range.end), 1));
-  // Reporting is the firm-wide view: everyone (owner and staff alike) sees the
-  // whole firm by default and may switch to any one person. This is the one tab
-  // that is intentionally shared — Today and Raw Data stay personal/owner-gated.
-  const qHost = typeof searchParams.host === 'string' && searchParams.host ? searchParams.host : undefined;
-  const fHost = qHost;
-  const q = qHost ? `?host=${encodeURIComponent(qHost)}` : ''; // preserve person across nav
+  // Defaults to the signed-in person (like Today); 'all' is the explicit Everyone
+  // view. Anyone may switch to Everyone or another person — Reporting is shared.
+  const scope = await getViewerScope();
+  const rawHost = typeof searchParams.host === 'string' && searchParams.host ? searchParams.host : undefined;
+  const isEveryone = rawHost === 'all';
+  const fHost = isEveryone ? undefined : (rawHost ?? scope.selfHost ?? undefined);
+  const q = rawHost ? `?host=${encodeURIComponent(rawHost)}` : ''; // preserve selection across nav
 
   // Person switcher data — shown to everyone here; fetched outside the body so it
   // can render at the very top even if the summary query fails.
@@ -273,19 +275,9 @@ export default async function RangePage({
       <>
         <h2 style={{ marginTop: 8 }}>Workday</h2>
         {period === 'day' ? (
-          <DayStrip
-            rows={stripByDay.get(range.start) ?? []}
-            day={range.start}
-            tz={cfg.timezone}
-            awayCutoffSeconds={cfg.awayCutoffSeconds}
-          />
+          <DayStrip rows={stripByDay.get(range.start) ?? []} day={range.start} tz={cfg.timezone} />
         ) : (
-          <WorkdayColumns
-            days={stripCols}
-            tz={cfg.timezone}
-            awayCutoffSeconds={cfg.awayCutoffSeconds}
-            colWidth={period === 'month' ? 20 : 46}
-          />
+          <WorkdayColumns days={stripCols} tz={cfg.timezone} colWidth={period === 'month' ? 20 : 46} />
         )}
         <DayStripLegend />
       </>
@@ -296,16 +288,16 @@ export default async function RangePage({
         {workday}
         <div className="cards">
           <div className="card">
+            <div className="k">Worked</div>
+            <div className="v">{hrs(worked)}</div>
+          </div>
+          <div className="card">
             <div className="k">Billable</div>
             <div className="v" style={{ color: C.billable }}>{hrs(billable)}</div>
           </div>
           <div className="card">
             <div className="k">Non-billable</div>
             <div className="v" style={{ color: C.nonbillable }}>{hrs(nonbillable)}</div>
-          </div>
-          <div className="card">
-            <div className="k">Worked</div>
-            <div className="v">{hrs(worked)}</div>
           </div>
         </div>
 
@@ -404,18 +396,18 @@ export default async function RangePage({
       {hosts.length > 0 && (
         <div className="tabs" style={{ marginTop: 12 }}>
           <span className="muted small" style={{ alignSelf: 'center', marginRight: 2 }}>Whose time:</span>
-          <Link className={`tab${!fHost ? ' active' : ''}`} href={`/range/${period}/${anchor}`}>
-            Everyone
-          </Link>
           {hosts.map((h) => (
             <Link
               key={h}
-              className={`tab${fHost === h ? ' active' : ''}`}
+              className={`tab${!isEveryone && fHost === h ? ' active' : ''}`}
               href={`/range/${period}/${anchor}?host=${encodeURIComponent(h)}`}
             >
-              {h}
+              {h}{h === scope.selfHost ? ' (you)' : ''}
             </Link>
           ))}
+          <Link className={`tab${isEveryone ? ' active' : ''}`} href={`/range/${period}/${anchor}?host=all`}>
+            Everyone
+          </Link>
         </div>
       )}
       <div className="tabs" style={{ marginTop: hosts.length > 0 ? 6 : 12 }}>
