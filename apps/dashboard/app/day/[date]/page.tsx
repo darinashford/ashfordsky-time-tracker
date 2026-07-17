@@ -9,11 +9,10 @@ import {
   getDataFreshness,
   getDayTimeline,
   getHosts,
-  getIdleBreakdown,
 } from '@tt/db';
 import { getDb, listClientOptions, listManualEntries } from '../../../lib/db';
 import { getViewerScope } from '../../../lib/viewer';
-import { BillingTable, BucketsTable, CoveragePanel, IdleTable } from '../../../components/panels';
+import { BillingTable, BucketsTable, CoveragePanel } from '../../../components/panels';
 import { DateJump } from '../../../components/DateJump';
 import { DayStrip, DayStripLegend } from '../../../components/DayStrip';
 import { ManualEntry } from '../../../components/ManualEntry';
@@ -78,11 +77,10 @@ export default async function DayPage({
 
   let content: ReactNode;
   try {
-    const [summary, coverage, buckets, idleBuckets, freshness, hosts, clients, manualEntries, timeline] = await Promise.all([
+    const [summary, coverage, buckets, freshness, hosts, clients, manualEntries, timeline] = await Promise.all([
       getDailyClientSummary(pool, schema, date, fHost),
       getCoverage(pool, schema, date, fHost),
       getCategoryBreakdown(pool, schema, date, cfg.timezone, fHost),
-      getIdleBreakdown(pool, schema, date, cfg.timezone, cfg.awayCutoffSeconds, fHost),
       getDataFreshness(pool, schema, fHost),
       getHosts(pool, schema),
       listClientOptions(),
@@ -90,16 +88,12 @@ export default async function DayPage({
       getDayTimeline(pool, schema, date, cfg.timezone, fHost),
     ]);
 
+    // The only time that counts is time WORKED. Billable + non-billable are the
+    // two things you care about; "Worked" is all active (non-away) time — the sum,
+    // plus the sliver not yet attributed to a client. Away / idle / locked time is
+    // excluded upstream by the resolver and never shown here.
     const billable = summary.reduce((a, r) => a + r.billableSeconds, 0);
-    const autoPct = coverage.activeSeconds
-      ? Math.round(((coverage.autoFinalizedSeconds + coverage.confirmedSeconds) / coverage.activeSeconds) * 100)
-      : 0;
-    // "Total on computer" = active + idle, excluding only a locked screen (Darin's
-    // call). getIdleBreakdown already drops locked time, so summing it gives the
-    // counted idle — and the breakdown total ties to the per-client "Idle" row.
-    const idleSeconds = idleBuckets.reduce((a, b) => a + b.seconds, 0);
-    const idleBlocks = idleBuckets.reduce((a, b) => a + b.intervals, 0);
-    const totalOnComputer = coverage.activeSeconds + idleSeconds;
+    const worked = coverage.activeSeconds;
     // Non-billable totals for its own row in the per-client table (from the
     // category breakdown, which is authoritative for non-billable seconds + blocks).
     const nonBillable = {
@@ -126,24 +120,16 @@ export default async function DayPage({
 
         <div className="cards">
           <div className="card">
-            <div className="k">Total on computer</div>
-            <div className="v">{secondsToHours(totalOnComputer)}h</div>
-          </div>
-          <div className="card">
-            <div className="k">Active</div>
-            <div className="v">{secondsToHours(coverage.activeSeconds)}h</div>
-          </div>
-          <div className="card">
             <div className="k">Billable</div>
             <div className="v">{secondsToHours(billable)}h</div>
           </div>
           <div className="card">
-            <div className="k">Confident</div>
-            <div className="v">{autoPct}%</div>
+            <div className="k">Non-billable</div>
+            <div className="v">{secondsToHours(nonBillable.seconds)}h</div>
           </div>
           <div className="card">
-            <div className="k">Uncertain</div>
-            <div className="v">{secondsToHours(coverage.needsReviewSeconds)}h</div>
+            <div className="k">Worked</div>
+            <div className="v">{secondsToHours(worked)}h</div>
           </div>
         </div>
 
@@ -151,7 +137,7 @@ export default async function DayPage({
         <CoveragePanel coverage={coverage} />
 
         <h2>Per-client summary</h2>
-        <BillingTable rows={summary} nonBillable={nonBillable} idle={{ seconds: idleSeconds, blocks: idleBlocks }} date={date} host={fHost} />
+        <BillingTable rows={summary} nonBillable={nonBillable} date={date} host={fHost} />
 
         <ManualEntry
           date={date}
@@ -163,15 +149,6 @@ export default async function DayPage({
 
         <h2>Non-billable buckets</h2>
         <BucketsTable rows={buckets} />
-
-        <h2>Idle / away breakdown</h2>
-        <p className="small muted">
-          Short idle — ActivityWatch saw no keyboard/mouse for 3+ min but under {Math.round(cfg.awayCutoffSeconds / 60)} min
-          at a stretch (reading, thinking, a quick step away). This counts toward Total on computer and ties to the Idle row
-          above. Longer unbroken stretches are treated as “away” (lunch, a meeting elsewhere) — excluded even if an app was
-          left open — as is locked-screen time.
-        </p>
-        <IdleTable rows={idleBuckets} />
 
         <p className="small muted" style={{ marginTop: 18 }}>
           Click any client or number above to open its blocks in <Link href={`/raw/${date}`}>Raw Data</Link>.
