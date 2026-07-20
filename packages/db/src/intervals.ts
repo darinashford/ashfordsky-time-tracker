@@ -42,7 +42,16 @@ export async function insertRawEvents(
 ): Promise<number> {
   const s = validIdent(schema);
   if (events.length === 0) return 0;
-  const payload = events.map((e) => ({
+  // AW heartbeat events grow in place, so one fetch can carry several snapshots
+  // of the same event (same dedupe key, different durations). Keep the longest
+  // per key — both because that's the true reading, and because ON CONFLICT DO
+  // UPDATE errors if a statement touches the same row twice.
+  const byKey = new Map<string, RawEventInput>();
+  for (const e of events) {
+    const prev = byKey.get(e.dedupeKey);
+    if (!prev || e.durationSeconds > prev.durationSeconds) byKey.set(e.dedupeKey, e);
+  }
+  const payload = [...byKey.values()].map((e) => ({
     source: e.source,
     hostname: e.hostname ?? null,
     bucket: e.bucket ?? null,
@@ -64,7 +73,9 @@ export async function insertRawEvents(
        from jsonb_to_recordset($1::jsonb) as x(
          source text, hostname text, bucket text, event_type text, app text, window_title text,
          url text, afk boolean, ts text, duration_seconds numeric, data jsonb, dedupe_key text)
-     on conflict (dedupe_key) do nothing`,
+     on conflict (dedupe_key) do update
+       set duration_seconds = greatest(${s}.raw_events.duration_seconds, excluded.duration_seconds)
+     where excluded.duration_seconds > ${s}.raw_events.duration_seconds`,
     [JSON.stringify(payload)],
   );
   return res.rowCount ?? 0;

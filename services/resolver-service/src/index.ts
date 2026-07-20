@@ -5,7 +5,6 @@ import {
   assertDatabaseUrl,
   bucketFor,
   categorizeActivity,
-  categoryLabel,
   type Exclusion,
   type Interval,
   isRealtimeCall,
@@ -252,34 +251,32 @@ async function main(): Promise<void> {
             { appNorm: sg.appNorm, host: sg.host, title: iv.windowTitle, url: iv.url },
             { staffNameTokens: graph.staffNameTokens },
           );
-          // A live external CALL is engaged time even across a long silent stretch
-          // (you're listening), so it's exempt from the "away" cutoff. An internal
-          // meeting (firm_internal) is NOT: a Teams chat/meeting left focused while
-          // you're gone shouldn't bill an hour of "internal" time, so it falls under
-          // the away cutoff like any other long idle. A real client call still
-          // survives — it identifies to the client and the call-run pass carries it.
-          const onCall = cat?.key === 'external_call';
-          if (!onCall && (idleRuns.get(iv.id) ?? iv.durationSeconds) > cfg.awayCutoffSeconds) {
-            await clearIfResolved(iv.id);
-            continue;
-          }
           if (cat?.tier === 'hard') { await clearIfResolved(iv.id); continue; } // locked/social/music — stay away
           const idleCtx = { graph, rules, config: resolverConfig, currentAnchor: engine.anchorFor(iv), ocrText: null };
           const { resolution: idleRes, winner: idleWinner } = runResolvers(iv, idleCtx);
+          // "On a call" must be corroborated by a real meeting RECORD (calendar /
+          // Krisp attendees -> calendar_event resolution). A call app merely
+          // focused on screen is not evidence: krisp/Teams left open while the
+          // machine slept through lunch read as an hour "on a call" — and a
+          // sleeping machine cannot be on a call. A genuine call that outruns its
+          // logged end still survives via the call-run pass on its ACTIVE blocks.
+          const inMeeting = idleRes.resolverType === 'calendar_event';
+          if (!inMeeting && (idleRuns.get(iv.id) ?? iv.durationSeconds) > cfg.awayCutoffSeconds) {
+            await clearIfResolved(iv.id);
+            continue;
+          }
           const idleBucket = bucketFor(
             { clientId: idleRes.clientId, resolverType: idleRes.resolverType, confidence: idleRes.confidence },
             cat,
             resolverConfig.reviewThreshold,
           );
-          // Past the idle grace, no-input time only counts as work when you were
-          // ON A CALL — a scheduled meeting (calendar/Krisp) or a live call app —
-          // because listening is working. It deliberately does NOT count merely
-          // because the last thing on screen belonged to a client: that let a
-          // 25-minute absence bill to whoever you last touched, which is what made
-          // a day of stepping away read as one unbroken block of work.
-          const inMeeting = idleRes.resolverType === 'calendar_event';
+          // Past the idle grace, no-input time only counts as work when a real
+          // meeting covers it — listening is working. It deliberately does NOT
+          // count merely because the last thing on screen belonged to a client:
+          // that let a 25-minute absence bill to whoever you last touched, which
+          // is what made a day of stepping away read as one unbroken block of work.
           if (!idleBucket && idleRes.clientId && idleRes.confidence >= resolverConfig.reviewThreshold
-              && (onCall || inMeeting)) {
+              && inMeeting) {
             // Counts: you were in a call/meeting with this client, just not typing.
             await upsertResolution(pool, cfg.schema, idleRes);
             currentRes.set(iv.id, asDayRow(idleRes));
@@ -304,28 +301,14 @@ async function main(): Promise<void> {
               clientGroupId: idleRes.clientGroupId,
               confidence: idleRes.confidence,
             });
-          } else if (idleBucket === 'external_call' || idleBucket === 'firm_internal') {
-            // Engaged but non-billable: a prospect/vendor call or an internal staff
-            // meeting. Promote so it counts + itemizes in its bucket; never billed.
-            const promotedRes: Resolution = {
-              ...idleRes,
-              clientId: null,
-              clientGroupId: null,
-              status: 'nonbillable',
-              isBillable: false,
-              needsReview: false,
-              category: idleBucket,
-              evidence: {
-                ...(idleRes.evidence as Record<string, unknown>),
-                reason: categoryLabel(idleBucket),
-                category: idleBucket,
-              },
-            };
-            await upsertResolution(pool, cfg.schema, promotedRes);
-            currentRes.set(iv.id, asDayRow(promotedRes));
-            promotedIds.push(iv.id);
-            counts.nonbillable++;
           } else {
+            // No meeting record covers this no-input stretch, so it is NOT "on a
+            // call" — even when a call app (krisp/Teams) is the focused window.
+            // Promoting those as non-billable call/internal time is exactly how a
+            // left-open krisp turned a lunch into "Calls — prospects / vendors".
+            // A real prospect/vendor call still itemizes in its bucket from its
+            // ACTIVE blocks (talking involves input); pure listening on a client
+            // call is covered by the meeting-record path above.
             // anything else idle -> stays away (and must not keep a stale resolution)
             await clearIfResolved(iv.id);
           }

@@ -235,9 +235,10 @@ export function HowItWorks({
           stepping away.
         </li>
         <li>
-          <strong>The exception is a live call or meeting</strong> — a scheduled calendar/Krisp meeting, or a
-          call app on screen. Listening <em>is</em> working, so that time counts in full, even across a long
-          silent stretch, and even past the {awayMin}-minute cutoff.
+          <strong>The exception is a real meeting</strong> — a calendar or Krisp meeting record covering that
+          time. Listening <em>is</em> working, so that time counts in full, even across a long silent stretch,
+          and even past the {awayMin}-minute cutoff. A call app merely sitting on screen is <em>not</em>{' '}
+          enough — krisp or Teams left open through lunch doesn’t read as a call.
         </li>
         <li>
           <strong>Over {awayMin} minutes</strong> (and not on a call) is away — lunch, gone from the desk —
