@@ -462,10 +462,11 @@ export async function mintTokenAction(_prev: MintTokenState, fd: FormData): Prom
   return { ok: true, host, token };
 }
 
-/** Enable/disable an attribution rule from the Rules audit (owner-only). A
- *  disabled rule stops matching on the next resolve; nothing is deleted. */
+/** Enable/disable an attribution rule from the Rules audit. Any signed-in staff
+ *  member can toggle rules (they apply firm-wide); the app is behind SSO, so a
+ *  caller is always an authenticated @ashfordsky user. A disabled rule stops
+ *  matching on the next resolve; nothing is deleted. */
 export async function toggleRuleAction(fd: FormData): Promise<void> {
-  if (!(await getViewerScope()).isOwner) return;
   const { pool, schema } = getDb();
   const ruleId = str(fd, 'ruleId');
   const enable = fd.get('enable') != null;
