@@ -84,6 +84,11 @@ export function RulesTable({ rows, canEdit }: { rows: RuleRow[]; canEdit: boolea
                 {risk && (
                   <div className="small" style={{ color: '#c0392b', marginTop: 2 }}>⚠ looks over-broad — {risk}</div>
                 )}
+                {!r.enabled && r.autoDisabledReason && (
+                  <div className="small muted" style={{ marginTop: 2 }}>
+                    🧹 turned off automatically — {r.autoDisabledReason}. Enable it to keep it for good.
+                  </div>
+                )}
               </td>
               <td>{r.clientName ?? <span className="muted">—</span>}</td>
               <td className="small">

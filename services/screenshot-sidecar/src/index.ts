@@ -10,9 +10,11 @@ import {
   getPool,
   listEmailWindowsNeedingOcr,
   listExpiredScreenshots,
+  purgeExpiredScreenshotImages,
   setScreenshotOcr,
   setScreenshotStatus,
   softDeleteScreenshot,
+  storeScreenshotImage,
 } from '@tt/db';
 import { createCapturer } from './capture';
 import { createOcrAdapter } from './ocr';
@@ -45,6 +47,8 @@ async function main(): Promise<void> {
       await softDeleteScreenshot(pool, cfg.schema, row.id);
     }
     if (expired.length) console.log(`[sidecar] purged ${expired.length} expired screenshots`);
+    const purgedImages = await purgeExpiredScreenshotImages(pool, cfg.schema, cfg.screenshotRetentionDays);
+    if (purgedImages) console.log(`[sidecar] purged ${purgedImages} expired screenshot images`);
 
     const pending = await countNeededScreenshots(pool, cfg.schema);
 
@@ -96,6 +100,10 @@ async function main(): Promise<void> {
       }
       const stored = await storage.store(shot.buffer, { width: shot.width, height: shot.height, dateFolder });
       await attachStoredScreenshot(pool, cfg.schema, shotId, stored, new Date().toISOString());
+      // Also upload the bytes so the dashboard can display the image (size-capped
+      // inside; the local file + OCR path is unaffected when this skips).
+      const uploaded = await storeScreenshotImage(pool, cfg.schema, shotId, shot.buffer, 'image/png');
+      if (!uploaded) console.log(`[sidecar] image too large to upload (${shot.buffer.length}b); OCR only`);
       const recognized = await ocr.recognize(shot.buffer);
       if (recognized && recognized.text.trim()) {
         await setScreenshotOcr(pool, cfg.schema, shotId, recognized.text, 'done');

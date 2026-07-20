@@ -40,6 +40,10 @@ export interface TimelineRow {
   reviewStatus: string | null;
   screenshotStatus: string | null;
   screenshotId: string | null;
+  /** True when the image bytes are stored and viewable (not just OCR text). */
+  screenshotHasImage: boolean;
+  /** First lines of the OCR text — the fallback view when there is no image. */
+  screenshotOcrExcerpt: string | null;
 }
 
 export async function getDayTimeline(
@@ -58,13 +62,18 @@ export async function getDayTimeline(
             r.status, r.confidence, r.resolver_type as "resolverType",
             r.is_billable as "isBillable", r.needs_review as "needsReview", r.evidence, r.category,
             rq.status as "reviewStatus",
-            ss.status as "screenshotStatus", ss.id as "screenshotId"
+            ss.status as "screenshotStatus", ss.id as "screenshotId",
+            coalesce(ss.has_image, false) as "screenshotHasImage",
+            ss.ocr_excerpt as "screenshotOcrExcerpt"
        from ${s}.intervals i
        left join ${s}.resolutions r on r.interval_id = i.id
        left join public.clients c on c.id = r.client_id
        left join ${s}.review_queue rq on rq.interval_id = i.id
        left join lateral (
-         select id, status from ${s}.screenshots sc
+         select sc.id, sc.status,
+                exists(select 1 from ${s}.screenshot_images si where si.screenshot_id = sc.id) as has_image,
+                left(sc.ocr_text, 800) as ocr_excerpt
+           from ${s}.screenshots sc
           where sc.interval_id = i.id and sc.status <> 'deleted'
           order by sc.created_at desc limit 1
        ) ss on true

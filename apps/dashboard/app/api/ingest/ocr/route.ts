@@ -20,7 +20,14 @@ export async function POST(req: Request): Promise<Response> {
   const t = await resolveIngestToken(pool, schema, token);
   if (!t) return NextResponse.json({ error: 'invalid token' }, { status: 401 });
 
-  let body: { app?: string | null; windowTitle?: string | null; capturedAt?: string; ocrText?: string };
+  let body: {
+    app?: string | null;
+    windowTitle?: string | null;
+    capturedAt?: string;
+    ocrText?: string;
+    imageBase64?: string;
+    imageContentType?: string;
+  };
   try {
     body = await req.json();
   } catch {
@@ -35,12 +42,26 @@ export async function POST(req: Request): Promise<Response> {
   // Cap absurd payloads; a screen of text is well under this.
   const text = ocrText.slice(0, 100_000);
 
+  // Optional screenshot bytes (viewable in Raw Data). Oversized or malformed
+  // images are dropped silently — attribution only needs the text.
+  let image: Buffer | null = null;
+  if (body.imageBase64 && body.imageBase64.length <= 3_500_000) {
+    try {
+      const buf = Buffer.from(body.imageBase64, 'base64');
+      if (buf.length > 0 && buf.length <= 2_500_000) image = buf;
+    } catch {
+      image = null;
+    }
+  }
+
   await stagePendingOcr(pool, schema, {
     hostname: t.hostname,
     app: body.app ?? null,
     windowTitle: body.windowTitle ?? null,
     capturedAt,
     ocrText: text,
+    image,
+    imageContentType: body.imageContentType ?? 'image/png',
   });
   await touchIngestToken(pool, schema, t.id);
   return NextResponse.json({ ok: true, host: t.hostname, staged: text.length });

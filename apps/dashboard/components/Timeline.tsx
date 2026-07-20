@@ -47,6 +47,8 @@ export interface TimelineRowVM {
   reviewStatus: string | null;
   screenshotStatus: string | null;
   screenshotId: string | null;
+  screenshotHasImage: boolean;
+  screenshotOcrExcerpt: string | null;
   evidence: Record<string, unknown> | null;
 }
 
@@ -342,9 +344,6 @@ const ClusterBlock = memo(function ClusterBlock({ cluster, tz, edit }: { cluster
 });
 
 const BlockRow = memo(function BlockRow({ r, tz, sub, edit }: { r: TimelineRowVM; tz: string; sub?: boolean; edit?: EditCtx }) {
-  // Screenshots only surface when one was actually captured (they live on the
-  // capture machine, so there's no image to embed here — just the fact of it,
-  // whose OCR text already feeds the "why").
   const hasShot = r.screenshotId != null && r.screenshotStatus === 'available';
   return (
     <tr data-id={r.id} className={sub ? 'sub' : undefined}>
@@ -356,11 +355,7 @@ const BlockRow = memo(function BlockRow({ r, tz, sub, edit }: { r: TimelineRowVM
       <td className="title-cell">
         <div className="t">
           {r.windowTitle ?? <span className="muted">(no title)</span>}
-          {hasShot && (
-            <span title="A screenshot was captured for this block" style={{ marginLeft: 6 }}>
-              🖼️
-            </span>
-          )}
+          {hasShot && <ShotButton r={r} />}
         </div>
         {r.url && <div className="u mono">{r.url}</div>}
         {(r.resolverType || r.evidence) && <Why r={r} />}
@@ -369,6 +364,52 @@ const BlockRow = memo(function BlockRow({ r, tz, sub, edit }: { r: TimelineRowVM
     </tr>
   );
 });
+
+/** Camera chip on a block that has a screenshot: click to blow it up. Shows the
+ *  actual image when its bytes were uploaded; otherwise falls back to the text
+ *  the OCR read off the screen (older captures kept only that). */
+function ShotButton({ r }: { r: TimelineRowVM }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className="shot-open"
+        title={r.screenshotHasImage ? 'View the screenshot' : 'View what was read off the screen'}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+      >
+        📷{r.screenshotHasImage ? '' : ' txt'}
+      </button>
+      {open && (
+        <div className="shot-overlay" onClick={() => setOpen(false)}>
+          <div className="shot-box" onClick={(e) => e.stopPropagation()}>
+            <div className="shot-head small">
+              <span className="muted">{r.windowTitle ?? 'Screenshot'}</span>
+              <button type="button" className="small" onClick={() => setOpen(false)}>
+                close
+              </button>
+            </div>
+            {r.screenshotHasImage ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img className="shot-img" src={`/api/screenshot/${r.screenshotId}`} alt="Screenshot" />
+            ) : (
+              <div>
+                <p className="small muted" style={{ marginTop: 0 }}>
+                  The image wasn’t uploaded for this capture (older captures stored text only).
+                  This is what the OCR read off the screen:
+                </p>
+                <pre className="shot-ocr">{r.screenshotOcrExcerpt ?? '(no text)'}</pre>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 /** The "why" details. The JSON dump renders only once opened — stringifying it
  *  for every block on every re-render is what made big days feel frozen. */

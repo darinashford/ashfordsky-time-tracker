@@ -5,6 +5,7 @@ import { normalizeDomain, normalizeText, type Resolution } from '@tt/shared';
 import {
   createIngestToken,
   getResolution,
+  countClientsForTitlePattern,
   insertCorrection,
   insertExclusion,
   requestTokenRotation,
@@ -133,7 +134,19 @@ export async function setClientAction(_prev: SetClientState, fd: FormData): Prom
         : { action: 'map_missive', payload: { kind: 'label', value: signal.value, clientId } }
       : null;
     const spec = mapped ? correctionToRuleSpec({ action: mapped.action, clientId, payload: mapped.payload }) : null;
-    if (spec) {
+    // Refuse to learn a title token the firm's own data says isn't a client
+    // identifier: if direct evidence already ties it to several DIFFERENT
+    // clients, it's a generic word or a shared tool ("bookkeeping", "pdfgear"),
+    // and a rule on it would mis-bill every future block that contains it. The
+    // reassignment still fixes this block — we just don't generalise from it.
+    let tooBroad: string | null = null;
+    if (spec && spec.ruleType === 'title_pattern') {
+      const spread = await countClientsForTitlePattern(pool, schema, spec.pattern);
+      if (spread.distinctClients >= 3) {
+        tooBroad = `“${spec.pattern}” already shows up on ${spread.distinctClients} different clients’ work, so it isn’t a ${''}client identifier — this block was fixed, but no rule was made.`;
+      }
+    }
+    if (spec && !tooBroad) {
       const ruleId = await upsertRule(pool, schema, {
         ruleType: spec.ruleType,
         matchKind: spec.matchKind,
@@ -146,6 +159,8 @@ export async function setClientAction(_prev: SetClientState, fd: FormData): Prom
       });
       await insertCorrection(pool, schema, { intervalId: ids[0]!, action: 'create_rule', newClientId: clientId, createdRuleId: ruleId });
       learnedDesc = describeLearn(iv.url, iv.window_title);
+    } else if (tooBroad) {
+      learnedDesc = tooBroad;
     }
   }
   revalidatePath(`/raw/${date}`);
@@ -455,7 +470,18 @@ export async function toggleRuleAction(fd: FormData): Promise<void> {
   const ruleId = str(fd, 'ruleId');
   const enable = fd.get('enable') != null;
   if (!ruleId) return;
-  await pool.query(`update ${schema}.attribution_rules set enabled = $2 where id = $1`, [ruleId, enable]);
+  // Enabling by hand is a human judgement the auto-sweep must respect: mark it
+  // reviewed so the nightly audit never turns it back off, and clear any note
+  // from a previous auto-disable.
+  await pool.query(
+    `update ${schema}.attribution_rules
+        set enabled = $2,
+            human_reviewed = case when $2 then true else human_reviewed end,
+            auto_disabled_reason = case when $2 then null else auto_disabled_reason end,
+            updated_at = now()
+      where id = $1`,
+    [ruleId, enable],
+  );
   revalidatePath('/rules');
 }
 

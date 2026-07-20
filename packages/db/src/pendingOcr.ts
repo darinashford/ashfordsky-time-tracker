@@ -10,13 +10,22 @@ import { validIdent } from './pool';
 export async function stagePendingOcr(
   pool: pg.Pool,
   schema: string,
-  x: { hostname: string; app: string | null; windowTitle: string | null; capturedAt: string; ocrText: string },
+  x: {
+    hostname: string;
+    app: string | null;
+    windowTitle: string | null;
+    capturedAt: string;
+    ocrText: string;
+    /** Optional screenshot bytes (rides the same row; becomes viewable in Raw Data). */
+    image?: Buffer | null;
+    imageContentType?: string | null;
+  },
 ): Promise<void> {
   const s = validIdent(schema);
   await pool.query(
-    `insert into ${s}.pending_ocr (hostname, app, window_title, captured_at, ocr_text)
-     values ($1, $2, $3, $4::timestamptz, $5)`,
-    [x.hostname, x.app, x.windowTitle, x.capturedAt, x.ocrText],
+    `insert into ${s}.pending_ocr (hostname, app, window_title, captured_at, ocr_text, image, image_content_type)
+     values ($1, $2, $3, $4::timestamptz, $5, $6, $7)`,
+    [x.hostname, x.app, x.windowTitle, x.capturedAt, x.ocrText, x.image ?? null, x.image ? (x.imageContentType ?? 'image/png') : null],
   );
 }
 
@@ -33,7 +42,8 @@ export async function attachPendingOcr(pool: pg.Pool, schema: string, host: stri
   const s = validIdent(schema);
   const res = await pool.query(
     `with matched as (
-       select p.id as pending_id, i.id as interval_id, p.ocr_text, p.app, p.window_title, p.captured_at
+       select p.id as pending_id, i.id as interval_id, p.ocr_text, p.app, p.window_title, p.captured_at,
+              p.image, p.image_content_type
          from ${s}.pending_ocr p
          join lateral (
            select i2.id, i2.start_ts
@@ -55,7 +65,17 @@ export async function attachPendingOcr(pool: pg.Pool, schema: string, host: stri
        insert into ${s}.screenshots
          (interval_id, status, storage_kind, ocr_status, ocr_text, ocr_ran_at, app, window_title, captured_at)
        select interval_id, 'available', 'none', 'done', ocr_text, now(), app, window_title, captured_at from matched
-       returning 1
+       returning id, interval_id, captured_at
+     ),
+     img as (
+       -- Carry the image (when the agent sent one) onto the new screenshot row,
+       -- so the dashboard can display it. Joined by interval+capture time.
+       insert into ${s}.screenshot_images (screenshot_id, content_type, bytes)
+       select ins.id, coalesce(m.image_content_type, 'image/png'), m.image
+         from ins
+         join matched m on m.interval_id = ins.interval_id and m.captured_at = ins.captured_at
+        where m.image is not null
+       on conflict (screenshot_id) do nothing
      ),
      del as (
        delete from ${s}.pending_ocr where id in (select pending_id from matched)

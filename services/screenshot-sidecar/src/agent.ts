@@ -121,10 +121,20 @@ async function main(): Promise<void> {
     return;
   }
 
+  // Send the image too (base64, size-capped) so the dashboard can display it.
+  // Over the cap we still send the OCR text — attribution never depends on the image.
+  const MAX_IMAGE_BYTES = 2_500_000;
+  const imageBase64 = shot.buffer.length <= MAX_IMAGE_BYTES ? shot.buffer.toString('base64') : undefined;
   const res = await fetch(ocrUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ app: cur.app, windowTitle: cur.title, capturedAt, ocrText: text }),
+    body: JSON.stringify({
+      app: cur.app,
+      windowTitle: cur.title,
+      capturedAt,
+      ocrText: text,
+      ...(imageBase64 ? { imageBase64, imageContentType: 'image/png' } : {}),
+    }),
   });
   const body = await res.text();
   if (!res.ok) {

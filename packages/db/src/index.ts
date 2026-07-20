@@ -11,3 +11,4 @@ export * from './settings';
 export * from './llmUsage';
 export * from './ingestTokens';
 export * from './pendingOcr';
+export * from './screenshotImages';

@@ -111,6 +111,7 @@ export interface RuleRow {
   createdBy: string | null; // who ran "set client · remember"
   fromHost: string | null; // whose block it was learned from
   blocksHit: number; // blocks currently attributed by this rule
+  autoDisabledReason: string | null; // set when the nightly audit turned it off
 }
 
 /**
@@ -124,6 +125,7 @@ export async function listRules(): Promise<RuleRow[]> {
   const res = await pool.query(
     `select r.id, r.rule_type as "ruleType", r.match_kind as "matchKind", r.pattern,
             c.name as "clientName", r.enabled, r.created_at as "createdAt",
+            r.auto_disabled_reason as "autoDisabledReason",
             co.created_by as "createdBy",
             (select i.hostname from ${schema}.intervals i where i.id = co.interval_id) as "fromHost",
             (select count(*)::int from ${schema}.resolutions res

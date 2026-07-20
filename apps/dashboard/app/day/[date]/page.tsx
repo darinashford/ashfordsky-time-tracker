@@ -9,6 +9,7 @@ import {
   getDataFreshness,
   getDayTimeline,
   getHosts,
+  getScreenshotStats,
 } from '@tt/db';
 import { getDb, listClientOptions, listManualEntries } from '../../../lib/db';
 import { getViewerScope } from '../../../lib/viewer';
@@ -82,7 +83,7 @@ export default async function DayPage({
 
   let content: ReactNode;
   try {
-    const [summary, coverage, buckets, freshness, hosts, clients, manualEntries, timeline] = await Promise.all([
+    const [summary, coverage, buckets, freshness, hosts, clients, manualEntries, timeline, shots] = await Promise.all([
       getDailyClientSummary(pool, schema, date, fHost),
       getCoverage(pool, schema, date, fHost),
       getCategoryBreakdown(pool, schema, date, cfg.timezone, fHost),
@@ -91,6 +92,7 @@ export default async function DayPage({
       listClientOptions(),
       listManualEntries(date, fHost ?? null),
       getDayTimeline(pool, schema, date, cfg.timezone, fHost),
+      getScreenshotStats(pool, schema, date, cfg.timezone, fHost),
     ]);
 
     // The only time that counts is time WORKED. Billable + non-billable are the
@@ -136,6 +138,15 @@ export default async function DayPage({
           <div className="card">
             <div className="k">Non-billable</div>
             <div className="v">{secondsToHours(nonBillable.seconds)}h</div>
+          </div>
+          <div className="card" title="Screenshots captured today, and how many blocks the on-screen text actually attributed to a client">
+            <div className="k">Screenshots</div>
+            <div className="v">{shots.taken}</div>
+            <div className="small muted">
+              {shots.utilized > 0
+                ? `${shots.utilized} block${shots.utilized === 1 ? '' : 's'} attributed (${secondsToHours(shots.utilizedSeconds)}h)`
+                : 'none used for attribution'}
+            </div>
           </div>
         </div>
 

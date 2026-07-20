@@ -188,6 +188,9 @@ importers:
 
   services/rule-audit:
     dependencies:
+      '@tt/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       '@tt/shared':
         specifier: workspace:*
         version: link:../../packages/shared
