@@ -83,7 +83,14 @@ export async function getOrCreateScreenshotId(
  * (capture runs before resolve, so that flag never fired), so it reliably picks
  * up the email window you're in right now. Newest first.
  */
-export async function listEmailWindowsNeedingOcr(
+/**
+ * Current windows worth reading off the screen: recent, non-idle, not yet
+ * OCR'd, and either an email window (sender/recipient identify the client) or
+ * a block whose attribution is WEAK — nothing resolved yet, needs-review, or a
+ * mere carry-forward/neighbor guess. Screens with a strong direct attribution
+ * are never captured, and known non-billable activity is skipped.
+ */
+export async function listWindowsNeedingOcr(
   pool: pg.Pool,
   schema: string,
   maxAgeSeconds: number,
@@ -93,11 +100,18 @@ export async function listEmailWindowsNeedingOcr(
   const res = await pool.query(
     `select i.id as "intervalId", i.app, i.window_title as "windowTitle"
        from ${s}.intervals i
+       left join ${s}.resolutions r on r.interval_id = i.id
       where i.is_afk = false
         and i.end_ts > now() - ($1 || ' seconds')::interval
-        and (lower(coalesce(i.app, '')) like '%missive%'
+        and coalesce(r.status::text, '') <> 'nonbillable'
+        and (
+          lower(coalesce(i.app, '')) like '%missive%'
           or lower(coalesce(i.app, '')) like '%outlook%'
-          or lower(coalesce(i.app, '')) like '%olk%')
+          or lower(coalesce(i.app, '')) like '%olk%'
+          or r.id is null
+          or r.status in ('unresolved', 'needs_review')
+          or (r.status = 'suggested' and r.resolver_type in ('context_carry_forward', 'neighbor'))
+        )
         and not exists (
           select 1 from ${s}.screenshots sc
            where sc.interval_id = i.id and sc.ocr_status = 'done'
@@ -108,6 +122,9 @@ export async function listEmailWindowsNeedingOcr(
   );
   return res.rows as Array<{ intervalId: string; app: string | null; windowTitle: string | null }>;
 }
+
+/** @deprecated superseded by listWindowsNeedingOcr (kept for compatibility). */
+export const listEmailWindowsNeedingOcr = listWindowsNeedingOcr;
 
 export async function attachStoredScreenshot(
   pool: pg.Pool,

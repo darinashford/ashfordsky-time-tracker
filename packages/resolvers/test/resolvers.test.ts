@@ -219,6 +219,21 @@ describe('screenshot OCR resolver', () => {
     expect(resolution.resolverType).toBe('screenshot_ocr');
   });
 
+  it('suggests a client whose NAME appears in the on-screen text (no email)', () => {
+    const g = emptyGraph();
+    addClient(g, 'tk', 'Meridian Inc');
+    const { resolution } = runResolvers(
+      interval({ app: 'CCH.CommonUIFramework.Shell.exe', windowTitle: 'Return Manager' }),
+      {
+        ...ctx(g),
+        ocrText: '2025 S-Corporation Return - Meridian Inc\nSchedule K-1 worksheet',
+      },
+    );
+    expect(resolution.clientId).toBe('tk');
+    expect(resolution.resolverType).toBe('screenshot_ocr');
+    expect(resolution.status).toBe('suggested');
+  });
+
   it('ignores OCR text with no known client address', () => {
     const g = emptyGraph();
     addClient(g, 'tk', 'Meridian Inc');

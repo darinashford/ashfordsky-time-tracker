@@ -8,7 +8,7 @@ import {
   countNeededScreenshots,
   getOrCreateScreenshotId,
   getPool,
-  listEmailWindowsNeedingOcr,
+  listWindowsNeedingOcr,
   listExpiredScreenshots,
   purgeExpiredScreenshotImages,
   setScreenshotOcr,
@@ -67,14 +67,14 @@ async function main(): Promise<void> {
     }
 
     const max = Number(arg('--max') ?? '3');
-    // Inbox OCR: find the email window you're in right now (active within the last
-    // few minutes) that hasn't been OCR'd yet. This does NOT wait for a resolve-
-    // created 'needed' flag — capture runs before resolve, so that flag never fired
-    // and nothing was ever captured. Capture runs before resolve on purpose, so the
-    // sender/recipient read here attributes the email the SAME cycle.
-    const targets = await listEmailWindowsNeedingOcr(pool, cfg.schema, 200, max);
+    // Screen OCR: find the window you're in right now (active within the last few
+    // minutes) that hasn't been OCR'd and could use it — an email window, or any
+    // block whose attribution is weak (unresolved / needs-review / carried over).
+    // Capture runs before resolve on purpose, so what's read off the screen can
+    // attribute the block the SAME cycle.
+    const targets = await listWindowsNeedingOcr(pool, cfg.schema, 200, max);
     if (targets.length === 0) {
-      console.log('[sidecar] no current email window to capture.');
+      console.log('[sidecar] no current window needs OCR.');
       return;
     }
 
@@ -88,7 +88,7 @@ async function main(): Promise<void> {
     const shotId = await getOrCreateScreenshotId(pool, cfg.schema, {
       intervalId: row.intervalId,
       status: 'needed',
-      reason: 'Inbox OCR: read sender/recipient from screen',
+      reason: 'Screen OCR: weak attribution — read the client off the screen',
       app: row.app,
       windowTitle: row.windowTitle,
     });

@@ -13,7 +13,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import dotenv from 'dotenv';
-import { isEmailContext, loadConfig, normalizeText } from '@tt/shared';
+import { categorizeActivity, isEmailContext, loadConfig, normalizeText, parseHost } from '@tt/shared';
 import { createCapturer } from './capture';
 import { createOcrAdapter } from './ocr';
 
@@ -86,8 +86,18 @@ async function main(): Promise<void> {
     console.log('[shot-agent] no active window (or idle); nothing to OCR.');
     return;
   }
-  if (!isEmailContext(cur.app, cur.url)) {
-    console.log('[shot-agent] current window is not an email window; skip.');
+  // Capture any WORK window, not just email — the server-side resolver reads
+  // client emails AND names off the screen now. Known non-billable contexts
+  // (social, music, entertainment, personal, system chrome) are never captured.
+  const isEmail = isEmailContext(cur.app, cur.url);
+  const cat = categorizeActivity({
+    appNorm: normalizeText(cur.app),
+    host: parseHost(cur.url),
+    title: cur.title,
+    url: cur.url,
+  });
+  if (!isEmail && cat?.tier === 'hard') {
+    console.log(`[shot-agent] current window is ${cat.key} (non-billable); skip.`);
     return;
   }
 
