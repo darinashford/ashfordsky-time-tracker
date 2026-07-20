@@ -17,7 +17,7 @@ export interface AppConfig {
   /** A no-input stretch shorter than this is a pause at the desk (reading,
    *  thinking, listening on a call), NOT idle — it counts as active and is
    *  attributed like the work around it. ActivityWatch flags AFK after ~3 min;
-   *  this raises the effective idle threshold in our own pipeline (default 10
+   *  this raises the effective idle threshold in our own pipeline (default 15
    *  min) without reconfiguring each machine's watcher. */
   idleGraceSeconds: number;
   activitywatchUrl: string;
@@ -64,7 +64,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     reviewThreshold: num(env.REVIEW_THRESHOLD, 0.5),
     minIntervalSeconds: num(env.MIN_INTERVAL_SECONDS, 5),
     awayCutoffSeconds: num(env.AWAY_CUTOFF_SECONDS, 1800),
-    idleGraceSeconds: num(env.IDLE_GRACE_SECONDS, 600),
+    idleGraceSeconds: num(env.IDLE_GRACE_SECONDS, 900),
     activitywatchUrl: env.ACTIVITYWATCH_URL ?? 'http://localhost:5600',
     sensorMode: env.SENSOR_MODE === 'live' ? 'live' : 'mock',
     screenshotsEnabled: env.SCREENSHOTS_ENABLED === 'true',

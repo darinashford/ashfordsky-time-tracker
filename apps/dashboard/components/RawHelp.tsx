@@ -153,7 +153,7 @@ export function HowItWorks({
   autoFinalizeThreshold,
   reviewThreshold,
   awayCutoffSeconds,
-  idleGraceSeconds = 600,
+  idleGraceSeconds = 900,
   screenshotsEnabled,
   screenshotStoresLocally = false,
   screenshotStableSeconds,
