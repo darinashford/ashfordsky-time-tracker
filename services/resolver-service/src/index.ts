@@ -23,6 +23,8 @@ import {
   getIntervalsForDay,
   getOcrTextByInterval,
   getPool,
+  isTransientDbError,
+  waitForDb,
   getResolutionsForDay,
   loadActivePolicies,
   loadClientGraph,
@@ -119,6 +121,8 @@ async function main(): Promise<void> {
   assertDatabaseUrl(cfg);
   const tz = cfg.timezone;
   const pool = getPool(cfg.databaseUrl);
+  // Ride out a busy pooler instead of losing the cycle on the first blip.
+  await waitForDb(pool);
   const resolverConfig = {
     autoFinalizeThreshold: cfg.autoFinalizeThreshold,
     reviewThreshold: cfg.reviewThreshold,
@@ -571,6 +575,14 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  // A busy/unreachable database is infrastructure, not a bug: this job runs
+  // every 10 minutes and re-resolves whole days, so a skipped cycle costs
+  // nothing and the next run catches up. Exit 0 so Railway doesn't report it as
+  // a crash (and email about it). Real errors still exit 1 and page.
+  if (isTransientDbError(err)) {
+    console.warn('[resolver] database unavailable, skipping this cycle:', err instanceof Error ? err.message : err);
+    process.exit(0);
+  }
   console.error('[resolver] failed:', err instanceof Error ? err.message : err);
   process.exit(1);
 });

@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import pg from 'pg';
 import { ruleRisk } from '@tt/shared';
-import { autoDisableRule, findOverBroadTitleRules, type OverBroadRule } from '@tt/db';
+import { autoDisableRule, findOverBroadTitleRules, isTransientDbError, type OverBroadRule } from '@tt/db';
 
 // ---------------------------------------------------------------------------
 // Nightly rule audit — now an auto-fixer, not just a heads-up.
@@ -175,6 +175,12 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  // Same as the resolver: a busy database is infrastructure, not a bug. This
+  // runs nightly and is idempotent, so skip and let tomorrow's run do it.
+  if (isTransientDbError(err)) {
+    console.warn('[rule-audit] database unavailable, skipping this run:', err instanceof Error ? err.message : err);
+    process.exit(0);
+  }
   console.error('[rule-audit] failed:', err instanceof Error ? err.message : err);
   process.exit(1);
 });

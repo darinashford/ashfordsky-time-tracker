@@ -2,6 +2,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import pg from 'pg';
+import { isTransientDbError } from '@tt/db';
 import { buildNameIndex, matchCompany, type NameRow } from './match';
 
 // ---------------------------------------------------------------------------
@@ -188,6 +189,12 @@ async function main(): Promise<void> {
 }
 
 main().catch((err) => {
+  // Same as the resolver: a busy database is infrastructure, not a bug. This
+  // runs daily and is idempotent, so skip and let tomorrow's run do it.
+  if (isTransientDbError(err)) {
+    console.warn('[qbo-sync] database unavailable, skipping this run:', err instanceof Error ? err.message : err);
+    process.exit(0);
+  }
   console.error('[qbo-sync] failed:', err instanceof Error ? err.message : err);
   process.exit(1);
 });
