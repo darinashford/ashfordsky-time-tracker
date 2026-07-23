@@ -2,14 +2,22 @@ import type pg from 'pg';
 import type { ClientAnchor, Resolution } from '@tt/shared';
 import { validIdent } from './pool';
 
-/** Insert or replace the single current resolution for an interval. */
+/**
+ * Insert or replace the single current resolution for an interval.
+ *
+ * Returns whether a row was actually written. The resolver re-resolves whole
+ * days every 10 minutes and usually lands on the identical answer — the WHERE
+ * guard makes those cycles write-free (no dead tuple, no WAL), which is what
+ * keeps steady-state disk IO near zero. Callers use the return value to skip
+ * dependent writes (the audit trail) on unchanged rows.
+ */
 export async function upsertResolution(
   pool: pg.Pool,
   schema: string,
   r: Resolution,
-): Promise<void> {
+): Promise<boolean> {
   const s = validIdent(schema);
-  await pool.query(
+  const res = await pool.query(
     `insert into ${s}.resolutions
        (interval_id, client_id, client_group_id, status, confidence, resolver_type,
         is_billable, needs_review, evidence, resolver_version, category, resolved_at, updated_at)
@@ -25,13 +33,23 @@ export async function upsertResolution(
        evidence         = excluded.evidence,
        resolver_version = excluded.resolver_version,
        category         = excluded.category,
-       updated_at       = now()`,
+       updated_at       = now()
+     where (${s}.resolutions.client_id, ${s}.resolutions.client_group_id, ${s}.resolutions.status,
+            ${s}.resolutions.confidence, ${s}.resolutions.resolver_type, ${s}.resolutions.is_billable,
+            ${s}.resolutions.needs_review, ${s}.resolutions.evidence, ${s}.resolutions.resolver_version,
+            ${s}.resolutions.category)
+           is distinct from
+           (excluded.client_id, excluded.client_group_id, excluded.status,
+            excluded.confidence, excluded.resolver_type, excluded.is_billable,
+            excluded.needs_review, excluded.evidence, excluded.resolver_version,
+            excluded.category)`,
     [
       r.intervalId, r.clientId, r.clientGroupId, r.status, r.confidence, r.resolverType,
       r.isBillable, r.needsReview, JSON.stringify(r.evidence ?? {}), r.resolverVersion ?? null,
       r.category ?? null,
     ],
   );
+  return (res.rowCount ?? 0) > 0;
 }
 
 /**
@@ -101,11 +119,15 @@ export async function enqueueReview(
   priority = 0,
 ): Promise<void> {
   const s = validIdent(schema);
+  // WHERE guard: re-enqueueing the same open item every 10-min cycle must not
+  // rewrite the row (write-amplification; see upsertResolution).
   await pool.query(
     `insert into ${s}.review_queue (interval_id, reason, priority, status)
      values ($1,$2,$3,'open')
      on conflict (interval_id) do update set
-       reason = excluded.reason, priority = excluded.priority, status = 'open', resolved_at = null`,
+       reason = excluded.reason, priority = excluded.priority, status = 'open', resolved_at = null
+     where (${s}.review_queue.reason, ${s}.review_queue.priority, ${s}.review_queue.status)
+           is distinct from (excluded.reason, excluded.priority, 'open')`,
     [intervalId, reason, priority],
   );
 }
@@ -117,8 +139,11 @@ export async function resolveReview(
   status: 'resolved' | 'dismissed' = 'resolved',
 ): Promise<void> {
   const s = validIdent(schema);
+  // `status <> $2` guard: called for every non-review block every cycle, and an
+  // already-resolved (or absent) row must cost zero writes.
   await pool.query(
-    `update ${s}.review_queue set status = $2, resolved_at = now() where interval_id = $1`,
+    `update ${s}.review_queue set status = $2, resolved_at = now()
+      where interval_id = $1 and status <> $2`,
     [intervalId, status],
   );
 }
@@ -144,7 +169,10 @@ export async function deleteResolution(
   );
 }
 
-/** Append a rolling current-client anchor (auditable context history). */
+/** Append a rolling current-client anchor (auditable context history). The
+ *  partial unique index on source_interval_id makes the 10-min re-resolve of a
+ *  day a no-op here — before it, the same anchors were re-appended every cycle
+ *  and this table grew past the interval data itself. */
 export async function appendAnchor(
   pool: pg.Pool,
   schema: string,
@@ -154,9 +182,21 @@ export async function appendAnchor(
   await pool.query(
     `insert into ${s}.current_client_state
        (as_of, client_id, client_group_id, confidence, anchor_resolver_type, source_interval_id)
-     values ($1::timestamptz,$2,$3,$4,$5,$6)`,
+     values ($1::timestamptz,$2,$3,$4,$5,$6)
+     on conflict (source_interval_id) where source_interval_id is not null do nothing`,
     [a.asOf, a.clientId, a.clientGroupId ?? null, a.confidence, a.anchorResolverType, a.sourceIntervalId ?? null],
   );
+}
+
+/** Retention for the anchor audit log: the context engine only looks minutes
+ *  back; 30 days is generous for debugging. Called once per resolver run. */
+export async function pruneAnchors(pool: pg.Pool, schema: string, days = 30): Promise<number> {
+  const s = validIdent(schema);
+  const res = await pool.query(
+    `delete from ${s}.current_client_state where as_of < now() - ($1 || ' days')::interval`,
+    [days],
+  );
+  return res.rowCount ?? 0;
 }
 
 export async function getResolution(

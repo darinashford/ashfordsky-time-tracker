@@ -36,7 +36,7 @@ const LABEL: Record<Cat, string> = {
 // daily_client_summary.billable_seconds rule.
 const BILLABLE_STATUSES = new Set(['auto_finalized', 'confirmed', 'suggested', 'needs_review']);
 
-/** The fields the strip logic needs — TimelineRow and the db StripRow both satisfy it. */
+/** The fields the rows-based strip logic needs — the Today page's TimelineRow satisfies it. */
 export interface StripInput {
   id: string;
   startTs: string;
@@ -112,6 +112,35 @@ export function daySegments(rows: StripInput[], day: string, tz: string): Segmen
     }
   }
 
+  return mergeBinTotals(bins);
+}
+
+/** Server-aggregated strip bins (see @tt/db getRangeStripBins) — worked seconds
+ *  per 5-min display bin, already split billable/non-billable and localized. */
+export interface BinnedInput {
+  bin: number; // 0..N_BINS-1
+  billableSeconds: number;
+  nonbillableSeconds: number;
+}
+
+/** Same dominance + merge rules as daySegments, but from pre-aggregated bins —
+ *  so Reporting never ships raw interval rows to render the strips. */
+export function segmentsFromBins(binRows: BinnedInput[]): Segment[] {
+  const bins: Array<Record<Cat, number>> = Array.from({ length: N_BINS }, () => ({
+    billable: 0,
+    nonbillable: 0,
+  }));
+  for (const b of binRows) {
+    if (b.bin < 0 || b.bin >= N_BINS) continue;
+    bins[b.bin]!.billable += b.billableSeconds;
+    bins[b.bin]!.nonbillable += b.nonbillableSeconds;
+  }
+  return mergeBinTotals(bins);
+}
+
+/** Dominant category per 5-min bin (billable wins ties; <30s = gap), merged
+ *  into contiguous same-category segments. */
+function mergeBinTotals(bins: Array<Record<Cat, number>>): Segment[] {
   const PRIORITY: Cat[] = ['billable', 'nonbillable'];
   const binCat: Array<Cat | null> = bins.map((b) => {
     const total = b.billable + b.nonbillable;
@@ -151,7 +180,15 @@ export function DayStrip({
   tz: string;
   label?: string;
 }) {
-  const segments = daySegments(rows, day, tz);
+  return <HorizontalStrip segments={daySegments(rows, day, tz)} label={label} />;
+}
+
+/** Same horizontal strip, from server-aggregated bins (Reporting's day view). */
+export function DayStripBinned({ bins, label }: { bins: BinnedInput[]; label?: string }) {
+  return <HorizontalStrip segments={segmentsFromBins(bins)} label={label} />;
+}
+
+function HorizontalStrip({ segments, label }: { segments: Segment[]; label?: string }) {
   const ticks: number[] = [];
   for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += 60) ticks.push(m); // every hour
 
@@ -208,12 +245,10 @@ export function DayStrip({
  *  client component WorkdayColumnsView. Time axis (6a→1a) runs down the left. */
 export function WorkdayColumns({
   days,
-  tz,
   height = 240,
   colWidth = 26,
 }: {
-  days: Array<{ day: string; rows: StripInput[]; label: string; sublabel?: string }>;
-  tz: string;
+  days: Array<{ day: string; bins: BinnedInput[]; workedSeconds: number; label: string; sublabel?: string }>;
   height?: number;
   colWidth?: number;
 }) {
@@ -223,15 +258,13 @@ export function WorkdayColumns({
     ticks.push({ label: fmtMin(m), topPct: ((m - DAY_START_MIN) / span) * 100 }); // every 2h
   }
   const prepared: PreparedDay[] = days.map((d) => {
-    const segments = daySegments(d.rows, d.day, tz);
-    // Total worked (non-AFK) hours that day — matches the "Worked" metric,
-    // computed from the rows, not the 5-min-binned segments.
-    const workedSeconds = d.rows.reduce((a, r) => (r.isAfk ? a : a + r.durationSeconds), 0);
+    const segments = segmentsFromBins(d.bins);
     return {
       key: d.day,
       label: d.label,
       sublabel: d.sublabel,
-      workedLabel: `${secondsToHours(workedSeconds).toFixed(2)}h`,
+      // Worked total from coverage_report — ties to the "Worked" card exactly.
+      workedLabel: `${secondsToHours(d.workedSeconds).toFixed(2)}h`,
       segments: segments.map((s) => ({
         topPct: pctOfDay(s.from),
         heightPct: pctOfDay(s.to - s.from),

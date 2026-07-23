@@ -14,6 +14,7 @@ import {
 } from '@tt/shared';
 import {
   appendAnchor,
+  pruneAnchors,
   bumpRuleHits,
   closePool,
   type DayResolutionRow,
@@ -384,7 +385,7 @@ async function main(): Promise<void> {
           };
         }
 
-        await upsertResolution(pool, cfg.schema, final);
+        const changed = await upsertResolution(pool, cfg.schema, final);
         currentRes.set(iv.id, asDayRow(final));
 
         if (final.status === 'auto_finalized') counts.auto++;
@@ -394,18 +395,23 @@ async function main(): Promise<void> {
 
         if (tiny) continue; // resolved quietly above; no audit/review/screenshot/anchor/neighbor
 
-        await replaceAudit(
-          pool,
-          cfg.schema,
-          iv.id,
-          votes.map((v) => ({
-            resolverType: v.resolverType,
-            clientId: v.clientId,
-            confidence: v.confidence,
-            matched: true,
-            evidence: v.evidence as Record<string, unknown>,
-          })),
-        );
+        // The audit trail explains the CURRENT resolution. If the resolution
+        // didn't change this cycle, the votes that produced it didn't either —
+        // rewriting them every 10 minutes was pure write amplification.
+        if (changed) {
+          await replaceAudit(
+            pool,
+            cfg.schema,
+            iv.id,
+            votes.map((v) => ({
+              resolverType: v.resolverType,
+              clientId: v.clientId,
+              confidence: v.confidence,
+              matched: true,
+              evidence: v.evidence as Record<string, unknown>,
+            })),
+          );
+        }
 
         if (final.status === 'needs_review') {
           const reason = String((final.evidence as Record<string, unknown>)?.reason ?? 'Needs review');
@@ -566,6 +572,11 @@ async function main(): Promise<void> {
       // Promote billable idle (meeting / call / reading) into active so it counts
       // toward active + billable everywhere; locked/personal/long idle stays away.
       await setIntervalsAfk(pool, cfg.schema, promotedIds, false);
+
+      // Anchor-log retention (once per run; the context engine only looks
+      // minutes back — 30 days of history is plenty for audit/debugging).
+      const prunedAnchors = await pruneAnchors(pool, cfg.schema);
+      if (prunedAnchors) console.log(`[resolver] pruned ${prunedAnchors} old anchors`);
 
       return counts;
     }

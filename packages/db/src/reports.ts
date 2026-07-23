@@ -366,47 +366,94 @@ export async function getScreenshotActivity(
   };
 }
 
-/** Slim per-interval rows for the "when did they work" strips, tagged with the
- *  local day so the caller can group into one column per day. Only the fields
- *  the strip needs (no screenshot/review joins) so a month-wide range stays cheap. */
-export interface StripRow {
-  day: string; // local (MT) calendar date, YYYY-MM-DD
-  id: string;
-  startTs: string;
-  endTs: string;
-  durationSeconds: number;
-  app: string | null;
-  isAfk: boolean;
-  clientId: string | null;
-  isBillable: boolean | null;
-  status: string | null;
+/**
+ * Pre-binned "when did they work" strip data: worked (non-AFK) seconds per
+ * 5-minute bin of the 6:00→1:00 display window, split billable/non-billable,
+ * per local day. Aggregated in SQL so a month-wide "Everyone" view ships ~228
+ * numbers per day instead of tens of thousands of raw interval rows with window
+ * titles — that raw transfer was a real driver of the disk-IO/egress drain.
+ * The billable rule matches daily_client_summary.billable_seconds: any
+ * client-attributed block (incl. needs_review) not explicitly non-billable.
+ */
+export interface StripBin {
+  day: string; // local calendar date, YYYY-MM-DD
+  bin: number; // 0..227, each 5 min from 6:00 AM
+  billableSeconds: number;
+  nonbillableSeconds: number;
 }
 
-export async function getRangeStripRows(
+export async function getRangeStripBins(
   pool: pg.Pool,
   schema: string,
   start: string,
   end: string,
   tz: string,
   host?: string | null,
-): Promise<StripRow[]> {
+): Promise<StripBin[]> {
   const s = validIdent(schema);
+  // Window: minutes 360 (6:00 AM) → 1500 (1:00 AM next day) since local
+  // midnight of the interval's local START date, matching the client strip.
   const res = await pool.query(
-    `select to_char((i.start_ts at time zone $3)::date, 'YYYY-MM-DD') as day,
-            i.id, i.start_ts as "startTs", i.end_ts as "endTs",
-            i.duration_seconds as "durationSeconds", i.app, i.is_afk as "isAfk",
-            r.client_id as "clientId", r.is_billable as "isBillable", r.status
-       from ${s}.intervals i
-       left join ${s}.resolutions r on r.interval_id = i.id
-      where (i.start_ts at time zone $3)::date between $1::date and $2::date
-        and ($4::text is null or i.hostname = $4)
-      order by i.start_ts asc`,
+    `select y.day, y.b as bin,
+            coalesce(sum(y.ov) filter (where y.billable), 0)::float     as "billableSeconds",
+            coalesce(sum(y.ov) filter (where not y.billable), 0)::float as "nonbillableSeconds"
+       from (
+         select x.day, g.b,
+                (least(x.end_min, 360 + 5 * (g.b + 1)) - greatest(x.start_min, 360 + 5 * g.b)) * 60 as ov,
+                x.billable
+           from (
+             select to_char((i.start_ts at time zone $3)::date, 'YYYY-MM-DD') as day,
+                    extract(epoch from ((i.start_ts at time zone $3)
+                      - date_trunc('day', i.start_ts at time zone $3))) / 60.0 as start_min,
+                    extract(epoch from ((i.start_ts at time zone $3)
+                      - date_trunc('day', i.start_ts at time zone $3))) / 60.0
+                      + i.duration_seconds / 60.0 as end_min,
+                    (r.client_id is not null
+                      and coalesce(r.is_billable, true)
+                      and r.status in ('auto_finalized','confirmed','suggested','needs_review')) as billable
+               from ${s}.intervals i
+               left join ${s}.resolutions r on r.interval_id = i.id
+              where not i.is_afk
+                and (i.start_ts at time zone $3)::date between $1::date and $2::date
+                and ($4::text is null or i.hostname = $4)
+           ) x
+           cross join lateral generate_series(
+             greatest(0, floor((x.start_min - 360) / 5))::int,
+             least(227, ceil((x.end_min - 360) / 5)::int - 1)
+           ) as g(b)
+          where x.end_min > 360 and x.start_min < 1500
+       ) y
+      where y.ov > 0
+      group by 1, 2
+      order by 1, 2`,
     [start, end, tz, host ?? null],
   );
   return res.rows.map((r) => ({
     ...r,
-    durationSeconds: Number(r.durationSeconds),
-  })) as StripRow[];
+    bin: Number(r.bin),
+    billableSeconds: Number(r.billableSeconds),
+    nonbillableSeconds: Number(r.nonbillableSeconds),
+  })) as StripBin[];
+}
+
+/** Worked (non-AFK) seconds per local day, from the coverage view — powers the
+ *  per-day totals on the Reporting strip without touching raw intervals. */
+export async function getActiveSecondsByDay(
+  pool: pg.Pool,
+  schema: string,
+  start: string,
+  end: string,
+  host?: string | null,
+): Promise<Map<string, number>> {
+  const s = validIdent(schema);
+  const res = await pool.query(
+    `select to_char(day, 'YYYY-MM-DD') as day, coalesce(sum(active_seconds),0)::float as seconds
+       from ${s}.coverage_report
+      where day between $1::date and $2::date and ($3::text is null or hostname = $3)
+      group by 1`,
+    [start, end, host ?? null],
+  );
+  return new Map(res.rows.map((r) => [r.day as string, Number(r.seconds)]));
 }
 
 /** Active (non-AFK) seconds summed across a date range, for the Reporting cards. */
