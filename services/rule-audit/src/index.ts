@@ -3,7 +3,13 @@ import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import pg from 'pg';
 import { ruleRisk } from '@tt/shared';
-import { autoDisableRule, findOverBroadTitleRules, isTransientDbError, type OverBroadRule } from '@tt/db';
+import {
+  autoDisableRule,
+  findOverBroadTitleRules,
+  isTransientDbError,
+  normalizePoolerUrl,
+  type OverBroadRule,
+} from '@tt/db';
 
 // ---------------------------------------------------------------------------
 // Nightly rule audit — now an auto-fixer, not just a heads-up.
@@ -129,9 +135,13 @@ async function main(): Promise<void> {
   if (!dbUrl) throw new Error('DATABASE_URL is required');
   const isLocal = /@(localhost|127\.0\.0\.1|\[?::1\]?)[:/]/i.test(dbUrl);
   const pool = new Pool({
-    connectionString: dbUrl,
+    // Transaction-mode pooler (see normalizePoolerUrl) so this job doesn't hold
+    // a scarce session-mode connection while it works through the rules.
+    connectionString: normalizePoolerUrl(dbUrl),
     ssl: isLocal ? undefined : { rejectUnauthorized: false },
     max: 2,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 15_000,
     application_name: 'ashfordsky-rule-audit',
   });
   try {

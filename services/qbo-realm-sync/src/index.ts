@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import pg from 'pg';
-import { isTransientDbError } from '@tt/db';
+import { isTransientDbError, normalizePoolerUrl } from '@tt/db';
 import { buildNameIndex, matchCompany, type NameRow } from './match';
 
 // ---------------------------------------------------------------------------
@@ -40,10 +40,14 @@ const DRY_RUN = process.argv.includes('--dry-run');
 function makePool(connectionString: string, name: string): pg.Pool {
   const isLocal = /@(localhost|127\.0\.0\.1|\[?::1\]?)[:/]/i.test(connectionString);
   const pool = new Pool({
-    connectionString,
+    // Transaction-mode pooler for Supabase URLs (see normalizePoolerUrl); other
+    // hosts are passed through untouched.
+    connectionString: normalizePoolerUrl(connectionString),
     ssl: isLocal ? undefined : { rejectUnauthorized: false },
-    max: 4,
+    max: 2,
     keepAlive: true,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 15_000,
     application_name: `ashfordsky-qbo-realm-sync-${name}`,
   });
   pool.on('error', (err) => {
