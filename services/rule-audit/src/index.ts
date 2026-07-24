@@ -8,6 +8,8 @@ import {
   findOverBroadTitleRules,
   isTransientDbError,
   normalizePoolerUrl,
+  pruneRawEvents,
+  takeHealthSnapshot,
   type OverBroadRule,
 } from '@tt/db';
 
@@ -162,7 +164,46 @@ async function main(): Promise<void> {
 
     // Pass 2 — report the ones that only *look* risky; a human decides those.
     const risky = await loadRisky(pool);
-    const message = [buildDisabledMessage(overBroad, dryRun), buildMessage(risky)].filter(Boolean).join('\n\n');
+
+    // Pass 3 — database health. The disk-IO budget is a daily burst bucket that
+    // reads ~0% right up until a sustained heavy stretch drains it (2026-07-22
+    // took the whole firm down for a day). Row-write rate and DB growth are the
+    // leading indicators, visible well before the cliff — snapshot nightly,
+    // alert when far above the app's normal. Also prune raw sensor events past
+    // their retention so the fastest-growing table stays bounded.
+    let healthMsg: string | null = null;
+    try {
+      const prunedRaw = await pruneRawEvents(pool, 'time_tracker', Number(process.env.RAW_EVENTS_RETENTION_DAYS ?? '90'));
+      if (prunedRaw) console.log(`[rule-audit] pruned ${prunedRaw} raw events past retention`);
+      const delta = await takeHealthSnapshot(pool, 'time_tracker');
+      if (delta && !delta.statsReset) {
+        const writeLimit = Number(process.env.HEALTH_WRITE_ALERT_ROWS_PER_DAY ?? '250000');
+        const growLimit = Number(process.env.HEALTH_GROWTH_ALERT_BYTES_PER_DAY ?? String(200 * 1024 * 1024));
+        const mb = (delta.growthBytesPerDay / 1024 / 1024).toFixed(1);
+        console.log(
+          `[rule-audit] db health: ~${delta.writesPerDay.toLocaleString()} row writes/day, ` +
+            `growth ~${mb} MB/day (window ${delta.hours.toFixed(1)}h)`,
+        );
+        if (delta.writesPerDay > writeLimit || delta.growthBytesPerDay > growLimit) {
+          healthMsg = [
+            `🚨 Time Tracker DB is writing far above normal — this is how the disk-IO budget drained on Jul 22.`,
+            `• ~${delta.writesPerDay.toLocaleString()} row writes/day (alert threshold ${writeLimit.toLocaleString()})`,
+            `• DB growing ~${mb} MB/day`,
+            `• Busiest tables: ${delta.topTables.map((t) => `${t.table} (${t.writesPerDay.toLocaleString()}/day)`).join(', ')}`,
+            `Check what changed (a new cron, a runaway backfill, a regression in the no-op write guards) before the IO budget empties.`,
+          ].join('\n');
+        }
+      } else if (delta?.statsReset) {
+        console.log('[rule-audit] db health: stats were reset (restart/resize) — skipping comparison this run.');
+      }
+    } catch (e) {
+      // Health telemetry must never break the rule audit.
+      console.warn('[rule-audit] health snapshot failed:', e instanceof Error ? e.message : e);
+    }
+
+    const message = [buildDisabledMessage(overBroad, dryRun), buildMessage(risky), healthMsg]
+      .filter(Boolean)
+      .join('\n\n');
     console.log(
       `[rule-audit] ${overBroad.length} auto-disabled, ${risky.length} risky rule(s), ` +
         `${risky.filter((r) => r.isNew).length} new this week.`,

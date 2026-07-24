@@ -90,8 +90,10 @@ async function main(): Promise<void> {
     await client.query('commit');
     if (pruned) console.log(`[ingestor] pruned ${pruned} stale interval(s)`);
     console.log(
-      `[ingestor] stored ${rawInserted} new raw events; upserted ${saved.length} intervals ` +
-        `(${saved.filter((i) => !i.isAfk).length} active).`,
+      // `saved` is only the rows that actually CHANGED — unchanged intervals are
+      // skipped by the upsert's no-op guard and cost zero writes.
+      `[ingestor] stored ${rawInserted} new raw events; ${intervals.length} intervals normalized, ` +
+        `${saved.length} written (${saved.filter((i) => !i.isAfk).length} active).`,
     );
   } catch (err) {
     await client.query('rollback').catch(() => undefined);

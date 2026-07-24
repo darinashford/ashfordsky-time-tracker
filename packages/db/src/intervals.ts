@@ -125,6 +125,20 @@ export async function upsertIntervals(
        browser = excluded.browser,
        is_afk = excluded.is_afk,
        updated_at = now()
+     -- Only write when something ACTUALLY changed. The sync re-sends the whole
+     -- day every 10 minutes, so without this guard all ~1,400 of a day's rows
+     -- were physically rewritten 144x/day (~200k row writes + WAL + index churn
+     -- for maybe 3k real blocks). That steady-state amplification is what drained
+     -- the disk-IO budget. A skipped row costs zero writes and zero dead tuples.
+     -- NOTE: RETURNING therefore yields only CHANGED rows — every caller uses the
+     -- result for a count, never to map ids, so the count now means "rows written".
+     where ${s}.intervals.end_ts is distinct from excluded.end_ts
+        or ${s}.intervals.duration_seconds is distinct from excluded.duration_seconds
+        or ${s}.intervals.app is distinct from excluded.app
+        or ${s}.intervals.window_title is distinct from excluded.window_title
+        or ${s}.intervals.url is distinct from excluded.url
+        or ${s}.intervals.browser is distinct from excluded.browser
+        or ${s}.intervals.is_afk is distinct from excluded.is_afk
      returning id, source, hostname, start_ts as "startTs", end_ts as "endTs",
                duration_seconds as "durationSeconds", app, window_title as "windowTitle",
                url, browser, is_afk as "isAfk"`,
