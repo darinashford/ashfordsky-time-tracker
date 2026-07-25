@@ -91,6 +91,42 @@ export async function takeHealthSnapshot(pool: pg.Pool, schema: string): Promise
 }
 
 /**
+ * Clients that render as MORE THAN ONE row in the per-client summary.
+ *
+ * A client must be exactly one row. It shattered into several when the summary
+ * view grouped on resolutions.client_group_id (stamped per-resolution, null on
+ * some rows) instead of the canonical clients.client_group_id — fixed in 0007,
+ * silently reverted by 0009, re-fixed in 0013. Any future view rewrite can
+ * reintroduce it, and the symptom is quiet: totals still add up, the time is
+ * just spread over duplicate rows. This is the tripwire.
+ *
+ * Deliberately checks the VIEW's own output, so it catches the whole class —
+ * a bad regroup, duplicate client records, divergent names — not one cause.
+ */
+export async function findSplitClients(
+  pool: pg.Pool,
+  schema: string,
+  days = 30,
+): Promise<Array<{ clientName: string; rows: number }>> {
+  const s = validIdent(schema);
+  const res = await pool.query(
+    `select client_name as "clientName", count(*)::int as rows
+       from (
+         select client_id, client_group_id, client_name
+           from ${s}.daily_client_summary
+          where client_id is not null
+            and day >= (current_date - ($1 || ' days')::interval)
+          group by client_id, client_group_id, client_name
+       ) g
+      group by client_name
+     having count(*) > 1
+      order by rows desc`,
+    [days],
+  );
+  return res.rows as Array<{ clientName: string; rows: number }>;
+}
+
+/**
  * Retention for raw sensor events. They are the replay source for
  * rebuild-from-raw (teammate history rebuilds), so keep a generous window —
  * but unbounded, they are the fastest-growing table in the schema.

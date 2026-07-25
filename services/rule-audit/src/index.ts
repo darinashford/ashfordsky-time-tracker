@@ -8,6 +8,7 @@ import {
   findOverBroadTitleRules,
   isTransientDbError,
   normalizePoolerUrl,
+  findSplitClients,
   pruneRawEvents,
   takeHealthSnapshot,
   type OverBroadRule,
@@ -172,6 +173,23 @@ async function main(): Promise<void> {
     // alert when far above the app's normal. Also prune raw sensor events past
     // their retention so the fastest-growing table stays bounded.
     let healthMsg: string | null = null;
+    let splitMsg: string | null = null;
+    try {
+      // Data-integrity tripwire: a client must be exactly ONE row in the
+      // per-client summary. This silently broke once (0009 reverted 0007's fix)
+      // and only surfaced when a human noticed a client listed three times.
+      const split = await findSplitClients(pool, 'time_tracker');
+      if (split.length) {
+        splitMsg = [
+          `⚠ Time Tracker: ${split.length} client${split.length === 1 ? '' : 's'} showing as multiple rows in "Hours by client" — their time is being split across duplicate rows.`,
+          ...split.slice(0, 8).map((s) => `• ${s.clientName} → ${s.rows} rows`),
+          `Usually means daily_client_summary regrouped on resolutions.client_group_id instead of clients.client_group_id (see migration 0013).`,
+        ].join('\n');
+        console.warn(`[rule-audit] ${split.length} client(s) split into multiple summary rows`);
+      }
+    } catch (e) {
+      console.warn('[rule-audit] split-client check failed:', e instanceof Error ? e.message : e);
+    }
     try {
       const prunedRaw = await pruneRawEvents(pool, 'time_tracker', Number(process.env.RAW_EVENTS_RETENTION_DAYS ?? '90'));
       if (prunedRaw) console.log(`[rule-audit] pruned ${prunedRaw} raw events past retention`);
@@ -201,7 +219,7 @@ async function main(): Promise<void> {
       console.warn('[rule-audit] health snapshot failed:', e instanceof Error ? e.message : e);
     }
 
-    const message = [buildDisabledMessage(overBroad, dryRun), buildMessage(risky), healthMsg]
+    const message = [buildDisabledMessage(overBroad, dryRun), buildMessage(risky), splitMsg, healthMsg]
       .filter(Boolean)
       .join('\n\n');
     console.log(
