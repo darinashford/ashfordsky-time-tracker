@@ -3,7 +3,7 @@
 import { Fragment, memo, useMemo, useState } from 'react';
 import { useFormState } from 'react-dom';
 import { categoryLabel, formatDuration, localClock } from '@tt/shared';
-import { describeLearn } from '../lib/learn';
+import { deriveLearn } from '../lib/learn';
 import {
   dispositionBucket,
   type Disposition,
@@ -488,9 +488,29 @@ function ClientReassign({
     return edit.clients.filter((c) => c.name.toLowerCase().includes(ql)).slice(0, 8);
   }, [q, edit.clients]);
 
-  // What "remember" would learn from THIS block — shown before you save so it's
-  // never a surprise (and makes "nothing to remember from a call" explicit).
-  const willLearn = useMemo(() => describeLearn(url, title), [url, title]);
+  // The rule this block WOULD teach — the auto-guess is only a starting point.
+  // It picks the first distinctive-looking word, which is often the tool rather
+  // than the client ("PDFgear - 2024 Tax Return - KST Ventures LLC.pdf" -> the
+  // useful pattern is "KST Ventures", not "pdfgear"), so the pattern is editable
+  // and you can also teach one when the guesser found nothing at all.
+  const derived = useMemo(() => deriveLearn(url, title), [url, title]);
+  const urlHost = useMemo(() => {
+    try {
+      return url ? new URL(url).hostname.replace(/^www\./, '') : '';
+    } catch {
+      return '';
+    }
+  }, [url]);
+  const [learnOn, setLearnOn] = useState(true);
+  const [learnKind, setLearnKind] = useState<'title' | 'host'>(derived?.kind ?? 'title');
+  const [pattern, setPattern] = useState(derived?.value ?? '');
+  // Switching kind swaps in that kind's sensible default, but never clobbers a
+  // pattern you typed yourself.
+  const pickKind = (k: 'title' | 'host') => {
+    setLearnKind(k);
+    const auto = derived?.kind === k ? derived.value : k === 'host' ? urlHost : '';
+    if (!pattern.trim() || pattern === derived?.value || pattern === urlHost) setPattern(auto);
+  };
 
   // Confirmation after a successful save (may be brief — the block jumps to the
   // "You set the client yourself" group once it re-resolves).
@@ -538,11 +558,57 @@ function ClientReassign({
         )}
       </div>
       <label className="reassign-learn small">
-        <input type="checkbox" name="learn" defaultChecked /> remember
+        <input
+          type="checkbox"
+          name="learn"
+          checked={learnOn}
+          onChange={(e) => setLearnOn(e.target.checked)}
+        />{' '}
+        remember
       </label>
-      <div className="reassign-note small muted">
-        {willLearn ? <>→ remembers {willLearn}</> : <>→ nothing to remember from this — just {count > 1 ? 'these blocks' : 'this block'}</>}
-      </div>
+      {learnOn ? (
+        <div className="reassign-note small muted">
+          <input type="hidden" name="learnKind" value={learnKind} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+            <span>→ remember any</span>
+            {urlHost ? (
+              <select
+                className="small"
+                value={learnKind}
+                onChange={(e) => pickKind(e.target.value as 'title' | 'host')}
+                aria-label="what the rule matches on"
+              >
+                <option value="title">window whose title contains</option>
+                <option value="host">page on the website</option>
+              </select>
+            ) : (
+              <span>window whose title contains</span>
+            )}
+            <input
+              name="learnPattern"
+              className="reassign-input"
+              style={{ width: 190 }}
+              value={pattern}
+              placeholder={learnKind === 'host' ? 'example.com' : 'e.g. KST Ventures'}
+              onChange={(e) => setPattern(e.target.value)}
+              spellCheck={false}
+            />
+          </div>
+          {pattern.trim() ? (
+            <div style={{ marginTop: 2 }}>
+              Future blocks matching this go to {sel ? sel.name : 'the client you pick'} automatically.
+            </div>
+          ) : (
+            <div style={{ marginTop: 2 }}>
+              Nothing typed — just {count > 1 ? 'these blocks' : 'this block'}, no rule.
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="reassign-note small muted">
+          → no rule — just {count > 1 ? 'these blocks' : 'this block'}.
+        </div>
+      )}
       {state.error && <div className="reassign-note small" style={{ color: '#c0392b' }}>{state.error}</div>}
       <div className="reassign-actions">
         <button type="submit" className="primary small" disabled={!sel}>

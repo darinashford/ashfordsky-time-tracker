@@ -17,7 +17,7 @@ import {
 import { correctionToRuleSpec } from '@tt/resolvers';
 import { getDb } from './db';
 import { getViewerScope } from './viewer';
-import { deriveLearn, describeLearn } from './learn';
+import { deriveLearn } from './learn';
 
 const str = (fd: FormData, k: string): string => String(fd.get(k) ?? '');
 const opt = (fd: FormData, k: string): string | undefined => {
@@ -127,11 +127,34 @@ export async function setClientAction(_prev: SetClientState, fd: FormData): Prom
 
   let learnedDesc: string | null = null;
   if (learn) {
-    const signal = deriveLearn(iv.url, iv.window_title);
-    const mapped = signal
-      ? signal.kind === 'host'
-        ? { action: 'map_url', payload: { host: signal.value, clientId } }
-        : { action: 'map_missive', payload: { kind: 'label', value: signal.value, clientId } }
+    // The picker sends the rule it's SHOWING you, which you can edit — the
+    // auto-guess is just its default. An edited pattern is a deliberate human
+    // choice ("KST Ventures", not the "pdfgear" the guesser grabbed), so it also
+    // gets marked human-reviewed below and the nightly audit leaves it alone.
+    const derived = deriveLearn(iv.url, iv.window_title);
+    const typed = str(fd, 'learnPattern').trim();
+    const kindRaw = str(fd, 'learnKind');
+    const kind: 'host' | 'title' = kindRaw === 'host' || kindRaw === 'title' ? kindRaw : (derived?.kind ?? 'title');
+    const value = typed || (derived?.kind === kind ? derived.value : '');
+    const userEdited = !!typed && typed !== derived?.value;
+    const mapped = value
+      ? kind === 'host'
+        ? { action: 'map_url', payload: { host: value, clientId } }
+        : {
+            action: 'create_rule',
+            // Same strength the old auto-learn path produced (it went through
+            // map_missive's 'label' branch): a learned title rule SUGGESTS, it
+            // doesn't auto-finalize. Pinned explicitly so create_rule's own
+            // defaults can't silently change how learned rules bill.
+            payload: {
+              ruleType: 'title_pattern',
+              matchKind: 'contains',
+              pattern: value,
+              clientId,
+              confidence: 0.8,
+              priority: 80,
+            },
+          }
       : null;
     const spec = mapped ? correctionToRuleSpec({ action: mapped.action, clientId, payload: mapped.payload }) : null;
     // Refuse to learn a title token the firm's own data says isn't a client
@@ -158,7 +181,15 @@ export async function setClientAction(_prev: SetClientState, fd: FormData): Prom
         priority: spec.priority,
       });
       await insertCorrection(pool, schema, { intervalId: ids[0]!, action: 'create_rule', newClientId: clientId, createdRuleId: ruleId });
-      learnedDesc = describeLearn(iv.url, iv.window_title);
+      // A pattern you typed yourself is a judgement the auto-sweep must respect.
+      if (userEdited) {
+        await pool.query(
+          `update ${schema}.attribution_rules set human_reviewed = true where id = $1`,
+          [ruleId],
+        );
+      }
+      learnedDesc =
+        kind === 'host' ? `the website ${spec.pattern}` : `windows with “${spec.pattern}” in the title`;
     } else if (tooBroad) {
       learnedDesc = tooBroad;
     }
