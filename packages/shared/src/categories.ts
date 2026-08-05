@@ -40,6 +40,15 @@ interface BucketDef {
   apps?: string[]; // substring match vs normalized app
   hosts?: string[]; // exact-or-suffix match vs host
   titles?: string[]; // brand keyword in the window title, for when the URL wasn't captured
+  /**
+   * When set, a HOST match only counts if the window title also contains one of
+   * these (normalized substring). Guards against the browser URL watcher going
+   * stale: it can keep reporting an old tab's URL while the title tracks the
+   * real window — without this, an hour on Neo.Tax carrying a stuck
+   * time.ashfordsky.com URL was force-bucketed "firm tooling, never billable"
+   * before any client matching could run. Empty titles still accept the host.
+   */
+  corroborateTitles?: string[];
 }
 
 // First match wins. 'hard' = never client work (pre-empts carry-forward);
@@ -138,6 +147,10 @@ const BUCKETS: BucketDef[] = [
       'supabase.com', 'supabase.io', 'railway.com', 'railway.app',
     ],
     titles: ['ashford agentos', 'quickbooks connector'],
+    // These sites' tab titles always brand themselves, so an unbranded title
+    // means the URL is stale (the browser watcher stuck on an old tab) and the
+    // host must not force this hard bucket.
+    corroborateTitles: ['ashford', 'time tracker', 'tracker', 'agentos', 'brain', 'supabase', 'railway', 'tt dashboard', 'profitability'],
   },
   {
     key: 'ai_assistant',
@@ -282,7 +295,12 @@ export function categorizeActivity(input: CategorizeInput, opts: CategorizeOptio
       return { key: b.key, label: categoryLabel(b.key), tier: b.tier };
     }
     if (b.hosts && host && hostMatches(host, b.hosts)) {
-      return { key: b.key, label: categoryLabel(b.key), tier: b.tier };
+      // Stale-URL guard: when required, the title must back the host up.
+      const corroborated =
+        !b.corroborateTitles || !titleNorm || b.corroborateTitles.some((t) => titleNorm.includes(t));
+      if (corroborated) {
+        return { key: b.key, label: categoryLabel(b.key), tier: b.tier };
+      }
     }
     // A brand keyword in the title (e.g. "Sam Boyle | LinkedIn", "ChatGPT") when
     // the URL wasn't captured. Less certain than a host/app match, so a hard bucket

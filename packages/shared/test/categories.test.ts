@@ -74,6 +74,31 @@ describe('categorizeActivity — firm overhead', () => {
     expect(categorizeActivity({ appNorm: 'chrome', host: 'app.financial-cents.com', title: 'Client', url: 'https://app.financial-cents.com/clients/999' })).toBeNull();
   });
 
+  // Regression: the browser URL watcher can go stale and keep reporting an old
+  // tab's URL while the title tracks the real window. An hour on Neo.Tax with a
+  // stuck time.ashfordsky.com URL was force-bucketed firm_tooling (hard, never
+  // billable) before any client matching could run. A firm host now needs the
+  // title to back it up; an unbranded title falls through to the resolvers.
+  it('does not force firm_tooling from a stale firm URL when the title disagrees', () => {
+    expect(
+      categorizeActivity({
+        appNorm: 'chrome',
+        host: 'time.ashfordsky.com',
+        title: 'Neo.Tax - Reimagining Taxes - Google Chrome',
+        url: 'https://time.ashfordsky.com/day/today',
+      }),
+    ).toBeNull();
+    // Branded title still buckets normally.
+    expect(
+      categorizeActivity({
+        appNorm: 'chrome',
+        host: 'time.ashfordsky.com',
+        title: 'Ashford Sky — Time Tracker - Google Chrome',
+        url: 'https://time.ashfordsky.com/day/today',
+      })?.key,
+    ).toBe('firm_tooling');
+  });
+
   it('buckets firm planning spreadsheets and the Time Tracker as firm overhead', () => {
     expect(categorizeActivity({ appNorm: 'excel', title: 'Master Client List - Excel' })?.key).toBe('firm_admin');
     expect(categorizeActivity({ appNorm: 'excel', title: 'Project List Jul 13 2026 - Excel' })?.key).toBe('firm_admin');
