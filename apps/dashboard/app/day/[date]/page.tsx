@@ -107,6 +107,12 @@ export default async function DayPage({
       seconds: buckets.reduce((a, b) => a + b.seconds, 0),
       blocks: buckets.reduce((a, b) => a + b.intervals, 0),
     };
+    // The cards must ADD UP: Worked = Billable + Non-billable + Unattributed.
+    // Computed as the residual (not a separate query) so the identity holds to
+    // the second no matter what odd states individual resolutions are in —
+    // this is the "no client signal yet" sliver, which used to be invisible and
+    // made the cards look like they didn't sum.
+    const unattributed = Math.max(0, worked - billable - nonBillable.seconds);
 
     content = (
       <>
@@ -138,6 +144,15 @@ export default async function DayPage({
           <div className="card">
             <div className="k">Non-billable</div>
             <div className="v">{secondsToHours(nonBillable.seconds)}h</div>
+          </div>
+          <div className="card" title="Worked time with no client signal yet — nothing matched and no one has assigned it. Billable + Non-billable + Unattributed = Worked.">
+            <div className="k">Unattributed</div>
+            <div className="v">{secondsToHours(unattributed)}h</div>
+            {unattributed > 60 && (
+              <div className="small muted">
+                <Link href={`/raw/${date}?client=none${fHost ? `&host=${encodeURIComponent(fHost)}` : ''}`}>assign in Raw Data</Link>
+              </div>
+            )}
           </div>
           <div className="card" title="Screenshots captured today, and how many blocks the on-screen text actually attributed to a client">
             <div className="k">Screenshots</div>
