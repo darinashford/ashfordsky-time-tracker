@@ -126,6 +126,33 @@ function isLockScreen(app: string | null | undefined): boolean {
  */
 const MAX_ACTIVE_CARRY_MS = 10 * 60_000;
 
+/**
+ * Drop intervals whose merge run began inside the warm-up margin at the left
+ * edge of a rolling fetch window — and return the prune floor to use with what
+ * remains.
+ *
+ * Why: a block that SPANS the window edge loses the events before `since`, so
+ * its merged run "starts" at the first visible event (seconds after the edge).
+ * That fabricated start mints a fresh dedupe key every cycle, and by the next
+ * cycle the edge has moved past the impostor, putting it permanently outside
+ * the prune window — one immortal duplicate per cycle (keith's Aug-4 day grew
+ * +0.84h of these in six hours). Blocks starting inside the margin were already
+ * captured with their TRUE start by earlier, deeper-window cycles; re-emitting
+ * them adds nothing and can only fabricate. Prune must use the same floor so it
+ * never sweeps the settled rows we deliberately did not re-emit.
+ */
+export function dropWindowEdgeHead(
+  intervals: IntervalInput[],
+  sinceIso: string,
+  marginMs = 30 * 60_000,
+): { intervals: IntervalInput[]; effectiveSinceIso: string } {
+  const floor = new Date(Date.parse(sinceIso) + marginMs).toISOString();
+  return {
+    intervals: intervals.filter((iv) => iv.startTs >= floor),
+    effectiveSinceIso: floor,
+  };
+}
+
 export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions = {}): IntervalInput[] {
   const gap = (opts.mergeGapSeconds ?? 60) * 1000;
   const windows = events.filter((e) => e.eventType === 'window' && e.durationSeconds > 0);

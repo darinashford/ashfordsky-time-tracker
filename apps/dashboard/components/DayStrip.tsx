@@ -138,13 +138,17 @@ export function segmentsFromBins(binRows: BinnedInput[]): Segment[] {
   return mergeBinTotals(bins);
 }
 
-/** Dominant category per 5-min bin (billable wins ties; <30s = gap), merged
- *  into contiguous same-category segments. */
+/** Dominant category per 5-min bin (billable wins ties), merged into contiguous
+ *  same-category segments. A bin paints only when it is MAJORITY worked (≥150s
+ *  of its 300s): each painted bin then stands for ~5 real minutes and the bar's
+ *  total length tracks the Worked card. The old ≥30s rule painted a full bin
+ *  for a half-minute of activity, so sparse stretches drew ~1.5h longer than
+ *  the day actually was and the strip visibly disagreed with the totals. */
 function mergeBinTotals(bins: Array<Record<Cat, number>>): Segment[] {
   const PRIORITY: Cat[] = ['billable', 'nonbillable'];
   const binCat: Array<Cat | null> = bins.map((b) => {
     const total = b.billable + b.nonbillable;
-    if (total < 30) return null; // effectively empty -> gap
+    if (total < 150) return null; // minority-worked bin -> gap
     let best: Cat = 'billable';
     let bestV = -1;
     for (const c of PRIORITY) {

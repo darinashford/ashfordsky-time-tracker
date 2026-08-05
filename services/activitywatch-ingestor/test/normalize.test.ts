@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ActivityEvent } from '@tt/shared';
-import { normalizeEvents } from '../src/normalize';
+import { dropWindowEdgeHead, normalizeEvents } from '../src/normalize';
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 const T0 = Date.parse('2026-07-15T20:00:00.000Z');
@@ -98,5 +98,35 @@ describe('normalizeEvents — locked / slept machines are never active', () => {
     ];
     const out = normalizeEvents(events);
     expect(activeSecondsFor(out, 'excel')).toBe(0);
+  });
+});
+
+describe('dropWindowEdgeHead — rolling-window edge must not mint duplicates', () => {
+  const mk = (startMs: number): Parameters<typeof dropWindowEdgeHead>[0][number] => ({
+    source: 'activitywatch',
+    hostname: 'keith',
+    startTs: iso(startMs),
+    endTs: iso(startMs + 2 * MIN),
+    durationSeconds: 120,
+    app: 'excel.exe',
+    windowTitle: 'Book1.xlsx',
+    url: null,
+    browser: null,
+    isAfk: false,
+    dedupeKey: `k${startMs}`,
+  });
+
+  it('drops runs that begin inside the warm-up margin and returns the matching prune floor', () => {
+    const since = iso(T0);
+    // At the edge (fabricated start), inside the margin, and well past it.
+    const out = dropWindowEdgeHead([mk(T0 + 5_000), mk(T0 + 10 * MIN), mk(T0 + 45 * MIN)], since);
+    expect(out.intervals.map((i) => i.startTs)).toEqual([iso(T0 + 45 * MIN)]);
+    expect(out.effectiveSinceIso).toBe(iso(T0 + 30 * MIN));
+  });
+
+  it('keeps everything when nothing touches the margin', () => {
+    const since = iso(T0);
+    const out = dropWindowEdgeHead([mk(T0 + 31 * MIN), mk(T0 + 60 * MIN)], since);
+    expect(out.intervals).toHaveLength(2);
   });
 });

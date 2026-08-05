@@ -11,7 +11,7 @@ import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import { loadConfig } from '@tt/shared';
 import { ActivityWatchAdapter } from './activitywatch';
-import { normalizeEvents, toRawEventInput } from './normalize';
+import { dropWindowEdgeHead, normalizeEvents, toRawEventInput } from './normalize';
 
 let envPath: string | null = null;
 for (const p of ['.env', '../.env', '../../.env', '../../../.env']) {
@@ -76,12 +76,20 @@ async function main(): Promise<void> {
     console.log('[agent] no activity to send.');
     return;
   }
-  const intervals = normalizeEvents(events, { mergeGapSeconds: 60 });
+  // Blocks that span the window's left edge get a fabricated start (their
+  // earlier events fall outside the fetch), which would mint a new dedupe key
+  // every cycle and leave an immortal duplicate behind. Drop the warm-up head;
+  // POST the matching floor as `since` so the server prunes the same range the
+  // kept keys actually cover. Raw events still ship in full (append-only).
+  const { intervals, effectiveSinceIso } = dropWindowEdgeHead(
+    normalizeEvents(events, { mergeGapSeconds: 60 }),
+    since,
+  );
 
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-    body: JSON.stringify({ since, until, rawEvents: events.map(toRawEventInput), intervals, meta: buildMeta() }),
+    body: JSON.stringify({ since: effectiveSinceIso, until, rawEvents: events.map(toRawEventInput), intervals, meta: buildMeta() }),
   });
   const text = await res.text();
   if (!res.ok) {

@@ -13,7 +13,7 @@ import {
 } from '@tt/db';
 import { ActivityWatchAdapter } from './activitywatch';
 import { MockAdapter } from './mock';
-import { normalizeEvents, toRawEventInput } from './normalize';
+import { dropWindowEdgeHead, normalizeEvents, toRawEventInput } from './normalize';
 import type { SensorAdapter } from './adapter';
 
 // Load the nearest .env walking up from the current working directory.
@@ -72,7 +72,15 @@ async function main(): Promise<void> {
     // A multi-day clear+insert can exceed the default statement cap; raise it
     // for this transaction only (a backfill is far bigger than a 15-min delta).
     await client.query("set local statement_timeout = '300000'");
-    const intervals = normalizeEvents(events, { mergeGapSeconds: 60 });
+    // Incremental runs drop the window-edge warm-up head: a block spanning the
+    // rolling window's left edge gets a fabricated start (its earlier events
+    // fall outside the fetch), minting a new dedupe key every cycle whose stale
+    // copy then escapes the advancing prune window forever. A --rebase uses an
+    // explicit, deliberately-chosen boundary, so it keeps the full output.
+    const normalized = normalizeEvents(events, { mergeGapSeconds: 60 });
+    const { intervals, effectiveSinceIso } = rebase
+      ? { intervals: normalized, effectiveSinceIso: since }
+      : dropWindowEdgeHead(normalized, since);
     // This machine's host — scope every clear/prune to it so, on a shared DB,
     // one person's sync can never delete another person's intervals.
     const host = intervals.find((i) => i.hostname)?.hostname ?? null;
@@ -85,7 +93,7 @@ async function main(): Promise<void> {
     const saved = await upsertIntervals(client, cfg.schema, intervals);
     let pruned = 0;
     if (!rebase) {
-      pruned = await pruneIntervalsExcept(client, cfg.schema, since, until, intervals.map((i) => i.dedupeKey), host);
+      pruned = await pruneIntervalsExcept(client, cfg.schema, effectiveSinceIso, until, intervals.map((i) => i.dedupeKey), host);
     }
     await client.query('commit');
     if (pruned) console.log(`[ingestor] pruned ${pruned} stale interval(s)`);
