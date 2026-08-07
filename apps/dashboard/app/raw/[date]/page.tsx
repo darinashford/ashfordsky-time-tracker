@@ -81,8 +81,10 @@ export default async function RawPage({
     // Idle (AFK) blocks are hidden by default (they're accounted for on Today);
     // ?client=idle surfaces them (minus the locked screen) for the drill-down.
     const visible = timeline.filter((t) => {
-      if (fClient === 'idle') return t.isAfk && !(t.app ?? '').toLowerCase().includes('lockapp');
-      if (t.isAfk) return false;
+      if (fClient === 'idle') return t.isAfk && !t.afkPromoted && !(t.app ?? '').toLowerCase().includes('lockapp');
+      // Grace-promoted pauses count as worked and show like normal blocks;
+      // only residual idle/away stays hidden here.
+      if (t.isAfk && !t.afkPromoted) return false;
       if (fClient === 'none') return t.clientId == null;
       if (fClient) return t.clientId === fClient;
       return true;

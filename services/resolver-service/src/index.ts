@@ -33,7 +33,7 @@ import {
   loadExclusions,
   replaceAudit,
   resolveReview,
-  setIntervalsAfk,
+  setAfkPromotion,
   upsertResolution,
 } from '@tt/db';
 import { ContextEngine, extractSignals, runResolvers } from '@tt/resolvers';
@@ -182,6 +182,9 @@ async function main(): Promise<void> {
       const ocrByInterval = await getOcrTextByInterval(pool, cfg.schema, day, tz);
       const counts: Counters = { auto: 0, suggested: 0, review: 0, unresolved: 0, nonbillable: 0, screenshots: 0 };
       const promotedIds: string[] = [];
+      // Sensor-flagged AFK ids as loaded — whatever ISN'T promoted this pass
+      // gets its afk_promoted cleared (a run may have grown past the grace).
+      const afkIdsAtLoad = allIntervals.filter((iv) => iv.isAfk).map((iv) => iv.id);
       // Live view of every interval's resolution as this pass writes them (seeded
       // with what's already in the DB) — the call-run pass reads the whole day.
       const currentRes = new Map<string, DayResolutionRow>(existing);
@@ -569,9 +572,11 @@ async function main(): Promise<void> {
       }
       } // end per-host pass
 
-      // Promote billable idle (meeting / call / reading) into active so it counts
-      // toward active + billable everywhere; locked/personal/long idle stays away.
-      await setIntervalsAfk(pool, cfg.schema, promotedIds, false);
+      // Persist the grace decision in the resolver-owned column (never is_afk —
+      // the sensor re-upserts that every sync and would undo us; see 0015).
+      const promotedSet = new Set(promotedIds);
+      await setAfkPromotion(pool, cfg.schema, promotedIds,
+        afkIdsAtLoad.filter((id) => !promotedSet.has(id)));
 
       // Anchor-log retention (once per run; the context engine only looks
       // minutes back — 30 days of history is plenty for audit/debugging).

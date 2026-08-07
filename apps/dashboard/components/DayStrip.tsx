@@ -1,34 +1,39 @@
 import { secondsToHours } from '@tt/shared';
+import { DayStripView, type PreparedStripSegment, type PreparedStripTick } from './DayStripView';
 import { WorkdayColumnsView, type PreparedDay, type PreparedTick } from './WorkdayColumnsView';
 
 /**
  * "When did they work" strips, color-coded —
  *   green  = billable client time (any client-attributed block, incl. Uncertain)
  *   slate  = non-billable + unattributed worked time
- *   track  = translucent gray: not worked (idle past the grace, away, locked, off)
- * The day runs 6:00 AM → 1:00 AM (MT), bucketed into 5-minute bins; each bin
- * takes its dominant category so the strip reads as clean runs, not slivers.
- * Idle is not a category: the resolver promotes real work out of AFK, so any
- * time still flagged AFK isn't worked and simply reads as a gap.
+ *   blue   = idle at the desk (a no-input stretch past the 15-min grace but
+ *            under the away cutoff — at the machine, not counted as worked)
+ *   track  = translucent gray: away (long idle, locked, off)
+ * The day runs 5:00 AM → 1:00 AM (MT) in 5-minute bins; each bin takes its
+ * dominant category so the strip reads as clean runs, not slivers. Worked =
+ * sensor-active OR grace-promoted (afk_promoted — see migration 0015). Clicking
+ * a segment shows a bubble with its duration.
  *
- * `DayStrip` is the horizontal single-day bar (Today). `WorkdayColumns` is the
- * multi-day version for Reporting: one vertical bar per day, time top→bottom.
+ * `DayStrip` (via buildDayModel) is the horizontal single-day bar (Today).
+ * `WorkdayColumns` is the multi-day Reporting version: one vertical bar per day.
  */
 
-const DAY_START_MIN = 6 * 60; // 6:00 AM local
+const DAY_START_MIN = 5 * 60; // 5:00 AM local
 const DAY_END_MIN = 25 * 60; // 1:00 AM next day
 const BIN_MIN = 5;
 const N_BINS = (DAY_END_MIN - DAY_START_MIN) / BIN_MIN;
 
-type Cat = 'billable' | 'nonbillable';
+type Cat = 'billable' | 'nonbillable' | 'idle';
 
 const COLOR: Record<Cat, string> = {
   billable: '#1f8a4c',
   nonbillable: '#566573',
+  idle: '#5b8def',
 };
 const LABEL: Record<Cat, string> = {
   billable: 'Billable',
   nonbillable: 'Non-billable / unattributed',
+  idle: 'Idle (at desk)',
 };
 
 // Any client-attributed block is billable, including low-confidence (needs_review)
@@ -44,6 +49,7 @@ export interface StripInput {
   durationSeconds: number;
   app: string | null;
   isAfk: boolean;
+  afkPromoted?: boolean | null;
   clientId: string | null;
   isBillable: boolean | null;
   status: string | null;
@@ -53,6 +59,15 @@ interface Segment {
   cat: Cat;
   from: number; // bin index (inclusive)
   to: number; // bin index (exclusive)
+  seconds: number; // real seconds of this category inside the segment
+}
+
+/** A prepared day model: strip segments plus the true idle-at-desk total (for
+ *  the Today "Idle" card — same computation, so the card and the blue segments
+ *  always agree). */
+export interface DayModel {
+  segments: Segment[];
+  idleSeconds: number;
 }
 
 /** Minutes since local midnight of `day` for an ISO timestamp, in `tz`. */
@@ -84,20 +99,69 @@ function fmtMin(min: number): string {
   return mm === 0 ? `${h12}${ap}` : `${h12}:${String(mm).padStart(2, '0')}${ap}`;
 }
 
-/** Bucket one day's rows into 5-min bins, pick each bin's dominant category, and
- *  merge adjacent same-category bins into segments (billable wins ties). Only
- *  worked (non-AFK) time fills the bar; idle/away/locked is left as a gap. */
-export function daySegments(rows: StripInput[], day: string, tz: string): Segment[] {
+function fmtDur(seconds: number): string {
+  const m = Math.round(seconds / 60);
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60 ? `${m % 60}m` : ''}`.trim();
+}
+
+const isLock = (app: string | null | undefined) => (app ?? '').toLowerCase().includes('lockapp');
+
+/**
+ * Classify one day's rows and bin them:
+ *  - worked (not AFK, or AFK but grace-promoted) → billable / nonbillable
+ *  - idle-at-desk: sensor-AFK, NOT promoted, not the lock screen, in a
+ *    contiguous run (5-min bridge, same as the resolver) no longer than the
+ *    away cutoff → blue. Runs longer than the cutoff, and lock time, are away.
+ */
+export function buildDayModel(
+  rows: StripInput[],
+  day: string,
+  tz: string,
+  awayCutoffSeconds: number,
+): DayModel {
+  // idle-at-desk run detection over the residual AFK rows
+  const afk = rows
+    .filter((r) => r.isAfk && !r.afkPromoted && !isLock(r.app))
+    .sort((a, b) => Date.parse(a.startTs) - Date.parse(b.startTs));
+  const idleIds = new Set<string>();
+  let idleSeconds = 0;
+  for (let i = 0; i < afk.length; ) {
+    let j = i;
+    let total = 0;
+    let lastEnd = Date.parse(afk[i]!.startTs);
+    const ids: string[] = [];
+    while (j < afk.length && Date.parse(afk[j]!.startTs) - lastEnd <= 300_000) {
+      total += afk[j]!.durationSeconds;
+      lastEnd = Date.parse(afk[j]!.endTs);
+      ids.push(afk[j]!.id);
+      j++;
+    }
+    if (total <= awayCutoffSeconds) {
+      for (const id of ids) idleIds.add(id);
+      idleSeconds += total;
+    }
+    i = j;
+  }
+
   const bins: Array<Record<Cat, number>> = Array.from({ length: N_BINS }, () => ({
     billable: 0,
     nonbillable: 0,
+    idle: 0,
   }));
   for (const r of rows) {
-    if (r.isAfk) continue; // idle / away / locked -> gap; only worked time fills the bar
-    const cat: Cat =
-      r.clientId && r.isBillable !== false && BILLABLE_STATUSES.has(r.status ?? '')
-        ? 'billable'
-        : 'nonbillable'; // unresolved / no-client, or non-billable buckets
+    let cat: Cat;
+    const worked = !r.isAfk || !!r.afkPromoted;
+    if (worked) {
+      cat =
+        r.clientId && r.isBillable !== false && BILLABLE_STATUSES.has(r.status ?? '')
+          ? 'billable'
+          : 'nonbillable';
+    } else if (idleIds.has(r.id)) {
+      cat = 'idle';
+    } else {
+      continue; // away / locked / long idle -> gap
+    }
     const s = minutesIntoDay(r.startTs, day, tz);
     const e = s + r.durationSeconds / 60;
     const from = Math.max(s, DAY_START_MIN);
@@ -112,7 +176,7 @@ export function daySegments(rows: StripInput[], day: string, tz: string): Segmen
     }
   }
 
-  return mergeBinTotals(bins);
+  return { segments: mergeBinTotals(bins), idleSeconds };
 }
 
 /** Server-aggregated strip bins (see @tt/db getRangeStripBins) — worked seconds
@@ -123,12 +187,14 @@ export interface BinnedInput {
   nonbillableSeconds: number;
 }
 
-/** Same dominance + merge rules as daySegments, but from pre-aggregated bins —
- *  so Reporting never ships raw interval rows to render the strips. */
+/** Same dominance + merge rules, from pre-aggregated bins — so Reporting never
+ *  ships raw interval rows to render the strips. (No idle channel here: the
+ *  Reporting columns show worked time only.) */
 export function segmentsFromBins(binRows: BinnedInput[]): Segment[] {
   const bins: Array<Record<Cat, number>> = Array.from({ length: N_BINS }, () => ({
     billable: 0,
     nonbillable: 0,
+    idle: 0,
   }));
   for (const b of binRows) {
     if (b.bin < 0 || b.bin >= N_BINS) continue;
@@ -138,17 +204,15 @@ export function segmentsFromBins(binRows: BinnedInput[]): Segment[] {
   return mergeBinTotals(bins);
 }
 
-/** Dominant category per 5-min bin (billable wins ties), merged into contiguous
- *  same-category segments. A bin paints only when it is MAJORITY worked (≥150s
- *  of its 300s): each painted bin then stands for ~5 real minutes and the bar's
- *  total length tracks the Worked card. The old ≥30s rule painted a full bin
- *  for a half-minute of activity, so sparse stretches drew ~1.5h longer than
- *  the day actually was and the strip visibly disagreed with the totals. */
+/** Dominant category per 5-min bin, merged into contiguous same-category
+ *  segments carrying their REAL seconds (for the click bubble). A bin paints
+ *  only when it is MAJORITY covered (≥150s of its 300s): each painted bin then
+ *  stands for ~5 real minutes and the bar's total length tracks the cards. */
 function mergeBinTotals(bins: Array<Record<Cat, number>>): Segment[] {
-  const PRIORITY: Cat[] = ['billable', 'nonbillable'];
+  const PRIORITY: Cat[] = ['billable', 'nonbillable', 'idle'];
   const binCat: Array<Cat | null> = bins.map((b) => {
-    const total = b.billable + b.nonbillable;
-    if (total < 150) return null; // minority-worked bin -> gap
+    const total = b.billable + b.nonbillable + b.idle;
+    if (total < 150) return null; // minority-covered bin -> gap
     let best: Cat = 'billable';
     let bestV = -1;
     for (const c of PRIORITY) {
@@ -163,9 +227,14 @@ function mergeBinTotals(bins: Array<Record<Cat, number>>): Segment[] {
   for (let b = 0; b < N_BINS; b++) {
     const c = binCat[b];
     if (!c) continue;
+    const secs = bins[b]![c];
     const last = segments[segments.length - 1];
-    if (last && last.cat === c && last.to === b) last.to = b + 1;
-    else segments.push({ cat: c, from: b, to: b + 1 });
+    if (last && last.cat === c && last.to === b) {
+      last.to = b + 1;
+      last.seconds += secs;
+    } else {
+      segments.push({ cat: c, from: b, to: b + 1, seconds: secs });
+    }
   }
   return segments;
 }
@@ -173,80 +242,39 @@ function mergeBinTotals(bins: Array<Record<Cat, number>>): Segment[] {
 const binToMin = (bin: number) => DAY_START_MIN + bin * BIN_MIN;
 const pctOfDay = (bin: number) => (bin / N_BINS) * 100;
 
-export function DayStrip({
-  rows,
-  day,
-  tz,
-  label,
-}: {
-  rows: StripInput[];
-  day: string;
-  tz: string;
-  label?: string;
-}) {
-  return <HorizontalStrip segments={daySegments(rows, day, tz)} label={label} />;
+function prepareSegments(segments: Segment[]): PreparedStripSegment[] {
+  return segments.map((s) => ({
+    leftPct: pctOfDay(s.from),
+    widthPct: pctOfDay(s.to - s.from),
+    color: COLOR[s.cat],
+    durLabel: fmtDur(s.seconds),
+    catLabel: LABEL[s.cat],
+    rangeLabel: `${fmtMin(binToMin(s.from))}–${fmtMin(binToMin(s.to))}`,
+  }));
+}
+
+function prepareTicks(stepMin: number): PreparedStripTick[] {
+  const ticks: PreparedStripTick[] = [];
+  for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += stepMin) {
+    ticks.push({ label: fmtMin(m), leftPct: ((m - DAY_START_MIN) / (DAY_END_MIN - DAY_START_MIN)) * 100 });
+  }
+  return ticks;
+}
+
+/** Horizontal Today strip from a prepared day model (click a block → bubble). */
+export function DayStrip({ model, label }: { model: DayModel; label?: string }) {
+  return <DayStripView segments={prepareSegments(model.segments)} ticks={prepareTicks(60)} label={label} />;
 }
 
 /** Same horizontal strip, from server-aggregated bins (Reporting's day view). */
 export function DayStripBinned({ bins, label }: { bins: BinnedInput[]; label?: string }) {
-  return <HorizontalStrip segments={segmentsFromBins(bins)} label={label} />;
-}
-
-function HorizontalStrip({ segments, label }: { segments: Segment[]; label?: string }) {
-  const ticks: number[] = [];
-  for (let m = DAY_START_MIN; m <= DAY_END_MIN; m += 60) ticks.push(m); // every hour
-
-  return (
-    <div style={{ margin: '4px 0 2px' }}>
-      {label && <div className="small muted" style={{ marginBottom: 2 }}>{label}</div>}
-      <div
-        style={{
-          position: 'relative',
-          height: 22,
-          borderRadius: 6,
-          background: 'rgba(150,158,168,0.18)', // "off" track: light translucent gray
-          overflow: 'hidden',
-        }}
-      >
-        {segments.map((s, i) => (
-          <span
-            key={i}
-            title={`${fmtMin(binToMin(s.from))}–${fmtMin(binToMin(s.to))} · ${LABEL[s.cat]}`}
-            style={{
-              position: 'absolute',
-              left: `${pctOfDay(s.from)}%`,
-              width: `${pctOfDay(s.to - s.from)}%`,
-              top: 0,
-              bottom: 0,
-              background: COLOR[s.cat],
-            }}
-          />
-        ))}
-      </div>
-      <div style={{ position: 'relative', height: 14 }}>
-        {ticks.map((m) => (
-          <span
-            key={m}
-            className="muted"
-            style={{
-              position: 'absolute',
-              left: `${((m - DAY_START_MIN) / (DAY_END_MIN - DAY_START_MIN)) * 100}%`,
-              transform: 'translateX(-50%)',
-              fontSize: 10,
-            }}
-          >
-            {fmtMin(m)}
-          </span>
-        ))}
-      </div>
-    </div>
-  );
+  return <DayStripView segments={prepareSegments(segmentsFromBins(bins))} ticks={prepareTicks(60)} label={label} />;
 }
 
 /** Multi-day "when did they work" view: one vertical bar per day. Used on
  *  Reporting for week/month. Heavy per-day work (binning) happens here on the
  *  server; the interactive shell (click-to-show worked-hours popup) is the small
- *  client component WorkdayColumnsView. Time axis (6a→1a) runs down the left. */
+ *  client component WorkdayColumnsView. Time axis (5a→1a) runs down the left. */
 export function WorkdayColumns({
   days,
   height = 240,
@@ -281,13 +309,15 @@ export function WorkdayColumns({
   );
 }
 
-/** Shared legend for one or more strips. */
-export function DayStripLegend() {
+/** Shared legend. Today passes showIdle (its strip paints idle blue); the
+ *  Reporting columns don't paint idle, so the swatch stays off there. */
+export function DayStripLegend({ showIdle = false }: { showIdle?: boolean }) {
   return (
     <div className="legend" style={{ marginTop: 2 }}>
       <span><i style={{ background: COLOR.billable }} />Billable</span>
       <span><i style={{ background: COLOR.nonbillable }} />Non-billable / unattributed</span>
-      <span><i style={{ background: 'rgba(150,158,168,0.35)' }} />Not worked / away</span>
+      {showIdle && <span><i style={{ background: COLOR.idle }} />Idle (at desk)</span>}
+      <span><i style={{ background: 'rgba(150,158,168,0.35)' }} />Away / off</span>
     </div>
   );
 }

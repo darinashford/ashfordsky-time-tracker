@@ -235,18 +235,36 @@ export async function pruneIntervalsExcept(
  * re-ingest re-normalizes is_afk from the raw events, and the next resolve pass
  * re-promotes, so this stays self-correcting.
  */
-export async function setIntervalsAfk(
+/**
+ * Persist the resolver's idle-grace decision WITHOUT touching is_afk. is_afk is
+ * the sensor's column: teammate agents and the local sync re-upsert it every
+ * cycle, so anything the resolver writes there gets overwritten within minutes
+ * (that tug-of-war is how sub-grace pauses kept flapping back to "not worked").
+ * afk_promoted is the resolver's column; ingest never writes it. Worked time
+ * everywhere = (not is_afk OR afk_promoted). Demote clears rows whose run grew
+ * past the grace since the last pass. Both updates are guarded no-ops.
+ */
+export async function setAfkPromotion(
   pool: Queryable,
   schema: string,
-  ids: string[],
-  isAfk: boolean,
+  promoteIds: string[],
+  demoteIds: string[],
 ): Promise<void> {
-  if (ids.length === 0) return;
   const s = validIdent(schema);
-  await pool.query(
-    `update ${s}.intervals set is_afk = $2, updated_at = now() where id = any($1::uuid[])`,
-    [ids, isAfk],
-  );
+  if (promoteIds.length) {
+    await pool.query(
+      `update ${s}.intervals set afk_promoted = true, updated_at = now()
+        where id = any($1::uuid[]) and not afk_promoted`,
+      [promoteIds],
+    );
+  }
+  if (demoteIds.length) {
+    await pool.query(
+      `update ${s}.intervals set afk_promoted = false, updated_at = now()
+        where id = any($1::uuid[]) and afk_promoted`,
+      [demoteIds],
+    );
+  }
 }
 
 /** Intervals with no resolution yet (or still 'unresolved'), worth attributing. */

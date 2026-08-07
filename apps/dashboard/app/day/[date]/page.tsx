@@ -15,7 +15,7 @@ import { getDb, listClientOptions, listManualEntries } from '../../../lib/db';
 import { getViewerScope } from '../../../lib/viewer';
 import { BillingTable, BucketsTable, CoveragePanel } from '../../../components/panels';
 import { DateJump } from '../../../components/DateJump';
-import { DayStrip, DayStripLegend } from '../../../components/DayStrip';
+import { buildDayModel, DayStrip, DayStripLegend } from '../../../components/DayStrip';
 import { ManualEntry } from '../../../components/ManualEntry';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -113,6 +113,10 @@ export default async function DayPage({
     // this is the "no client signal yet" sliver, which used to be invisible and
     // made the cards look like they didn't sum.
     const unattributed = Math.max(0, worked - billable - nonBillable.seconds);
+    // One model drives BOTH the strip's blue idle segments and the Idle card,
+    // so they can never disagree. Idle-at-desk = a no-input run past the
+    // 15-min grace but under the away cutoff (not locked, not promoted).
+    const strip = buildDayModel(timeline, date, cfg.timezone, cfg.awayCutoffSeconds);
 
     content = (
       <>
@@ -129,8 +133,8 @@ export default async function DayPage({
           </div>
         )}
         <h2 style={{ marginTop: 8 }}>Workday</h2>
-        <DayStrip rows={timeline} day={date} tz={cfg.timezone} />
-        <DayStripLegend />
+        <DayStrip model={strip} />
+        <DayStripLegend showIdle />
 
         <div className="cards">
           <div className="card">
@@ -153,6 +157,11 @@ export default async function DayPage({
                 <Link href={`/raw/${date}?client=none${fHost ? `&host=${encodeURIComponent(fHost)}` : ''}`}>assign in Raw Data</Link>
               </div>
             )}
+          </div>
+          <div className="card" title="No-input stretches past the 15-minute grace but under the away cutoff — you were at the desk but it doesn't count as worked. Click the blue blocks on the strip to see each one.">
+            <div className="k">Idle</div>
+            <div className="v">{secondsToHours(strip.idleSeconds)}h</div>
+            <div className="small muted">at desk · not counted in Worked</div>
           </div>
           <div className="card" title="Screenshots captured today, and how many blocks the on-screen text actually attributed to a client">
             <div className="k">Screenshots</div>
