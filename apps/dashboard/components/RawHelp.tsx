@@ -248,10 +248,10 @@ export function HowItWorks({
       </ul>
       <p className="small">
         A short auto-lock under the grace counts like any other pause — the machine locking itself at 5
-        minutes doesn’t erase a bathroom break. Locked or asleep beyond the grace is away, and a gap in the
-        idle sensor means you were gone, even if a window stayed “focused.” On Today, idle at the desk (past
-        the grace, under the away cutoff) shows as its own card and as blue blocks on the Workday strip —
-        click any block for its exact duration. Off-computer time can still be added by hand — see below.
+        minutes doesn’t erase a bathroom break. There is no “idle” status: past the grace you are simply{' '}
+        <strong>Away / off</strong>, the light-gray track on the Workday strip. Click any stretch of the
+        strip — worked or away — for a bubble with its exact duration. Off-computer time can still be added
+        by hand — see below.
       </p>
       <p className="small">
         A call is tied to a client by <strong>who was on it</strong> — the calendar / Krisp attendees — so a

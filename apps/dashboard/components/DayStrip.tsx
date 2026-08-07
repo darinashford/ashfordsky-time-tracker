@@ -6,13 +6,13 @@ import { WorkdayColumnsView, type PreparedDay, type PreparedTick } from './Workd
  * "When did they work" strips, color-coded —
  *   green  = billable client time (any client-attributed block, incl. Uncertain)
  *   slate  = non-billable + unattributed worked time
- *   blue   = idle at the desk (a no-input stretch past the 15-min grace but
- *            under the away cutoff — at the machine, not counted as worked)
- *   track  = translucent gray: away (long idle, locked, off)
- * The day runs 5:00 AM → 1:00 AM (MT) in 5-minute bins; each bin takes its
- * dominant category so the strip reads as clean runs, not slivers. Worked =
- * sensor-active OR grace-promoted (afk_promoted — see migration 0015). Clicking
- * a segment shows a bubble with its duration.
+ *   track  = translucent gray: Away / off (any no-input stretch past the
+ *            15-min grace, locked, or simply not there)
+ * There are exactly TWO worked states — billable and non-billable; idle is not
+ * a status. The day runs 5:00 AM → 1:00 AM (MT) in 5-minute bins; each bin
+ * takes its dominant category so the strip reads as clean runs, not slivers.
+ * Worked = sensor-active OR grace-promoted (afk_promoted — migration 0015).
+ * Clicking any stretch — worked OR away — shows a bubble with its duration.
  *
  * `DayStrip` (via buildDayModel) is the horizontal single-day bar (Today).
  * `WorkdayColumns` is the multi-day Reporting version: one vertical bar per day.
@@ -23,17 +23,15 @@ const DAY_END_MIN = 25 * 60; // 1:00 AM next day
 const BIN_MIN = 5;
 const N_BINS = (DAY_END_MIN - DAY_START_MIN) / BIN_MIN;
 
-type Cat = 'billable' | 'nonbillable' | 'idle';
+type Cat = 'billable' | 'nonbillable';
 
 const COLOR: Record<Cat, string> = {
   billable: '#1f8a4c',
   nonbillable: '#566573',
-  idle: '#5b8def',
 };
 const LABEL: Record<Cat, string> = {
   billable: 'Billable',
   nonbillable: 'Non-billable / unattributed',
-  idle: 'Idle (at desk)',
 };
 
 // Any client-attributed block is billable, including low-confidence (needs_review)
@@ -62,12 +60,9 @@ interface Segment {
   seconds: number; // real seconds of this category inside the segment
 }
 
-/** A prepared day model: strip segments plus the true idle-at-desk total (for
- *  the Today "Idle" card — same computation, so the card and the blue segments
- *  always agree). */
+/** A prepared day model for the Today strip. */
 export interface DayModel {
   segments: Segment[];
-  idleSeconds: number;
 }
 
 /** Minutes since local midnight of `day` for an ISO timestamp, in `tz`. */
@@ -105,63 +100,24 @@ function fmtDur(seconds: number): string {
   return `${Math.floor(m / 60)}h ${m % 60 ? `${m % 60}m` : ''}`.trim();
 }
 
-const isLock = (app: string | null | undefined) => (app ?? '').toLowerCase().includes('lockapp');
-
 /**
- * Classify one day's rows and bin them:
- *  - worked (not AFK, or AFK but grace-promoted) → billable / nonbillable
- *  - idle-at-desk: sensor-AFK, NOT promoted, not the lock screen, in a
- *    contiguous run (5-min bridge, same as the resolver) no longer than the
- *    away cutoff → blue. Runs longer than the cutoff, and lock time, are away.
+ * Classify one day's rows and bin them. Worked (not AFK, or AFK but
+ * grace-promoted) → billable / nonbillable. Everything else — idle past the
+ * grace, locked, gone — is Away/off: unpainted track, clickable via a ghost
+ * segment so its duration is one click away.
  */
-export function buildDayModel(
-  rows: StripInput[],
-  day: string,
-  tz: string,
-  awayCutoffSeconds: number,
-): DayModel {
-  // idle-at-desk run detection over the residual AFK rows
-  const afk = rows
-    .filter((r) => r.isAfk && !r.afkPromoted && !isLock(r.app))
-    .sort((a, b) => Date.parse(a.startTs) - Date.parse(b.startTs));
-  const idleIds = new Set<string>();
-  let idleSeconds = 0;
-  for (let i = 0; i < afk.length; ) {
-    let j = i;
-    let total = 0;
-    let lastEnd = Date.parse(afk[i]!.startTs);
-    const ids: string[] = [];
-    while (j < afk.length && Date.parse(afk[j]!.startTs) - lastEnd <= 300_000) {
-      total += afk[j]!.durationSeconds;
-      lastEnd = Date.parse(afk[j]!.endTs);
-      ids.push(afk[j]!.id);
-      j++;
-    }
-    if (total <= awayCutoffSeconds) {
-      for (const id of ids) idleIds.add(id);
-      idleSeconds += total;
-    }
-    i = j;
-  }
-
+export function buildDayModel(rows: StripInput[], day: string, tz: string): DayModel {
   const bins: Array<Record<Cat, number>> = Array.from({ length: N_BINS }, () => ({
     billable: 0,
     nonbillable: 0,
-    idle: 0,
   }));
   for (const r of rows) {
-    let cat: Cat;
     const worked = !r.isAfk || !!r.afkPromoted;
-    if (worked) {
-      cat =
-        r.clientId && r.isBillable !== false && BILLABLE_STATUSES.has(r.status ?? '')
-          ? 'billable'
-          : 'nonbillable';
-    } else if (idleIds.has(r.id)) {
-      cat = 'idle';
-    } else {
-      continue; // away / locked / long idle -> gap
-    }
+    if (!worked) continue; // Away / off -> track
+    const cat: Cat =
+      r.clientId && r.isBillable !== false && BILLABLE_STATUSES.has(r.status ?? '')
+        ? 'billable'
+        : 'nonbillable';
     const s = minutesIntoDay(r.startTs, day, tz);
     const e = s + r.durationSeconds / 60;
     const from = Math.max(s, DAY_START_MIN);
@@ -176,7 +132,7 @@ export function buildDayModel(
     }
   }
 
-  return { segments: mergeBinTotals(bins), idleSeconds };
+  return { segments: mergeBinTotals(bins) };
 }
 
 /** Server-aggregated strip bins (see @tt/db getRangeStripBins) — worked seconds
@@ -194,7 +150,6 @@ export function segmentsFromBins(binRows: BinnedInput[]): Segment[] {
   const bins: Array<Record<Cat, number>> = Array.from({ length: N_BINS }, () => ({
     billable: 0,
     nonbillable: 0,
-    idle: 0,
   }));
   for (const b of binRows) {
     if (b.bin < 0 || b.bin >= N_BINS) continue;
@@ -209,9 +164,9 @@ export function segmentsFromBins(binRows: BinnedInput[]): Segment[] {
  *  only when it is MAJORITY covered (≥150s of its 300s): each painted bin then
  *  stands for ~5 real minutes and the bar's total length tracks the cards. */
 function mergeBinTotals(bins: Array<Record<Cat, number>>): Segment[] {
-  const PRIORITY: Cat[] = ['billable', 'nonbillable', 'idle'];
+  const PRIORITY: Cat[] = ['billable', 'nonbillable'];
   const binCat: Array<Cat | null> = bins.map((b) => {
-    const total = b.billable + b.nonbillable + b.idle;
+    const total = b.billable + b.nonbillable;
     if (total < 150) return null; // minority-covered bin -> gap
     let best: Cat = 'billable';
     let bestV = -1;
@@ -243,14 +198,35 @@ const binToMin = (bin: number) => DAY_START_MIN + bin * BIN_MIN;
 const pctOfDay = (bin: number) => (bin / N_BINS) * 100;
 
 function prepareSegments(segments: Segment[]): PreparedStripSegment[] {
-  return segments.map((s) => ({
-    leftPct: pctOfDay(s.from),
-    widthPct: pctOfDay(s.to - s.from),
-    color: COLOR[s.cat],
-    durLabel: fmtDur(s.seconds),
-    catLabel: LABEL[s.cat],
-    rangeLabel: `${fmtMin(binToMin(s.from))}–${fmtMin(binToMin(s.to))}`,
-  }));
+  const out: PreparedStripSegment[] = [];
+  const pushAway = (from: number, to: number) => {
+    if (to <= from) return;
+    out.push({
+      leftPct: pctOfDay(from),
+      widthPct: pctOfDay(to - from),
+      color: 'transparent', // the gray track IS the color; this is the click target
+      ghost: true,
+      durLabel: fmtDur((to - from) * BIN_MIN * 60),
+      catLabel: 'Away / off',
+      rangeLabel: `${fmtMin(binToMin(from))}–${fmtMin(binToMin(to))}`,
+    });
+  };
+  // Away ghosts only BETWEEN painted work — the empty early morning and the
+  // night after the last block aren't "away stretches" worth a bubble.
+  let cursor: number | null = null;
+  for (const s of segments) {
+    if (cursor != null) pushAway(cursor, s.from);
+    out.push({
+      leftPct: pctOfDay(s.from),
+      widthPct: pctOfDay(s.to - s.from),
+      color: COLOR[s.cat],
+      durLabel: fmtDur(s.seconds),
+      catLabel: LABEL[s.cat],
+      rangeLabel: `${fmtMin(binToMin(s.from))}–${fmtMin(binToMin(s.to))}`,
+    });
+    cursor = s.to;
+  }
+  return out;
 }
 
 function prepareTicks(stepMin: number): PreparedStripTick[] {
@@ -309,14 +285,12 @@ export function WorkdayColumns({
   );
 }
 
-/** Shared legend. Today passes showIdle (its strip paints idle blue); the
- *  Reporting columns don't paint idle, so the swatch stays off there. */
-export function DayStripLegend({ showIdle = false }: { showIdle?: boolean }) {
+/** Shared legend for the strips. */
+export function DayStripLegend() {
   return (
     <div className="legend" style={{ marginTop: 2 }}>
       <span><i style={{ background: COLOR.billable }} />Billable</span>
       <span><i style={{ background: COLOR.nonbillable }} />Non-billable / unattributed</span>
-      {showIdle && <span><i style={{ background: COLOR.idle }} />Idle (at desk)</span>}
       <span><i style={{ background: 'rgba(150,158,168,0.35)' }} />Away / off</span>
     </div>
   );

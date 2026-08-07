@@ -8,9 +8,11 @@ export interface PreparedStripSegment {
   leftPct: number;
   widthPct: number;
   color: string;
-  durLabel: string; // "47m" / "1h 20m" — REAL seconds in the segment
-  catLabel: string; // "Billable" / "Idle (at desk)" / …
+  durLabel: string; // "47m" / "1h 20m" — real seconds (worked) or span (away)
+  catLabel: string; // "Billable" / "Away / off" / …
   rangeLabel: string; // "9:05a–9:50a"
+  /** An Away/off stretch: invisible click target over the gray track. */
+  ghost?: boolean;
 }
 export interface PreparedStripTick {
   label: string;
@@ -106,7 +108,7 @@ export function DayStripView({
               width: `${s.widthPct}%`,
               top: 0,
               bottom: 0,
-              background: s.color,
+              background: s.ghost ? 'transparent' : s.color,
               cursor: 'pointer',
               outline: selected === i ? '2px solid #133048' : 'none',
               outlineOffset: -2,
