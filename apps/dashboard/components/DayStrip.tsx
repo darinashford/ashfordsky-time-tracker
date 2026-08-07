@@ -178,6 +178,22 @@ function mergeBinTotals(bins: Array<Record<Cat, number>>): Segment[] {
     }
     return best;
   });
+  // INVARIANT: no visible Away sliver shorter than the 15-min grace. A short
+  // unpainted run BETWEEN painted bins can only be bin-rounding or a knife-edge
+  // idle run (e.g. 14.9 min chained just under the grace) — under the policy
+  // "gone < 15 min = still working" it must read as continuation, so absorb it
+  // into the preceding category. Real absences are >= 3 bins and stay gray.
+  for (let b = 0; b < N_BINS; b++) {
+    if (binCat[b] != null) continue;
+    let e = b;
+    while (e < N_BINS && binCat[e] == null) e++;
+    const prev = b > 0 ? binCat[b - 1] : null;
+    const next = e < N_BINS ? binCat[e] : null;
+    if (prev && next && e - b < 3) {
+      for (let i = b; i < e; i++) binCat[i] = prev;
+    }
+    b = e;
+  }
   const segments: Segment[] = [];
   for (let b = 0; b < N_BINS; b++) {
     const c = binCat[b];

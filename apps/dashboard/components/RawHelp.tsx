@@ -248,10 +248,12 @@ export function HowItWorks({
       </ul>
       <p className="small">
         A short auto-lock under the grace counts like any other pause — the machine locking itself at 5
-        minutes doesn’t erase a bathroom break. There is no “idle” status: past the grace you are simply{' '}
-        <strong>Away / off</strong>, the light-gray track on the Workday strip. Click any stretch of the
-        strip — worked or away — for a bubble with its exact duration. Off-computer time can still be added
-        by hand — see below.
+        minutes doesn’t erase a bathroom break. The same goes for a laptop that <em>sleeps</em> during a short
+        interruption: a recording gap under the grace is bridged and counts as continuing work. There is no
+        “idle” status: past the grace you are simply <strong>Away / off</strong>, the light-gray track on the
+        Workday strip. An Away stretch is therefore always at least {'15'} minutes — anything shorter reads as
+        part of the surrounding work. Click any stretch of the strip — worked or away — for a bubble with its
+        exact duration. Off-computer time can still be added by hand — see below.
       </p>
       <p className="small">
         A call is tied to a client by <strong>who was on it</strong> — the calendar / Krisp attendees — so a

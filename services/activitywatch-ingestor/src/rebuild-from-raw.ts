@@ -108,9 +108,33 @@ async function main(): Promise<void> {
               )`,
           [host, day, tz],
         );
-        const saved = await upsertIntervals(client, s, intervals);
+        // Rows carrying manual/LLM work SURVIVE the delete above. Never insert a
+        // twin of a survivor: the same wall-clock span under a fresh dedupe key
+        // double-counts the block. (This exact bug shipped once — 908 duplicate
+        // rows and 9.1h of phantom worked time on one host — because the rebuild
+        // re-normalized spans the delete had deliberately spared.)
+        const kept = await client.query(
+          `select start_ts, end_ts, coalesce(app,'') as app, is_afk, coalesce(window_title,'') as title
+             from ${s}.intervals
+            where hostname = $1 and (start_ts at time zone $3)::date = $2::date`,
+          [host, day, tz],
+        );
+        const spanKey = (st: string, en: string, app: string, afk: boolean, title: string) =>
+          `${st}|${en}|${app}|${afk}|${title}`;
+        const surviving = new Set(
+          (kept.rows as Array<{ start_ts: Date; end_ts: Date; app: string; is_afk: boolean; title: string }>).map(
+            (k) => spanKey(new Date(k.start_ts).toISOString(), new Date(k.end_ts).toISOString(), k.app, k.is_afk, k.title),
+          ),
+        );
+        const fresh = intervals.filter(
+          (iv) => !surviving.has(spanKey(iv.startTs, iv.endTs, iv.app ?? '', iv.isAfk, iv.windowTitle ?? '')),
+        );
+        const saved = await upsertIntervals(client, s, fresh);
         await client.query('commit');
-        console.log(`[rebuild] ${day} :: normalized ${intervals.length}, deleted ${del.rowCount}, upserted ${saved.length}`);
+        console.log(
+          `[rebuild] ${day} :: normalized ${intervals.length}, deleted ${del.rowCount}, ` +
+            `kept ${surviving.size} protected, upserted ${saved.length}`,
+        );
       } catch (err) {
         await client.query('rollback').catch(() => undefined);
         console.error(`[rebuild] ${day} :: FAILED ${err instanceof Error ? err.message : String(err)}`);
