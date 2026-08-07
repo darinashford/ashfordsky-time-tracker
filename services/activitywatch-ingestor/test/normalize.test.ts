@@ -130,3 +130,42 @@ describe('dropWindowEdgeHead — rolling-window edge must not mint duplicates', 
     expect(out.intervals).toHaveLength(2);
   });
 });
+
+describe('normalizeEvents — sensor holes (machine slept, nothing recorded)', () => {
+  it('bridges a hole under the grace with a synthetic idle row', () => {
+    const events: ActivityEvent[] = [
+      afk(T0, 10, false),
+      win(T0, 10, 'excel.exe', 'Book1.xlsx'),
+      // 12-minute HOLE: no events at all (lid closed)
+      afk(T0 + 22 * MIN, 10, false),
+      win(T0 + 22 * MIN, 10, 'excel.exe', 'Book1.xlsx'),
+    ];
+    const out = normalizeEvents(events);
+    const gap = out.find((r) => (r.windowTitle ?? '').includes('sensor gap'));
+    expect(gap).toBeDefined();
+    expect(gap!.isAfk).toBe(true);
+    expect(gap!.durationSeconds).toBeGreaterThanOrEqual(11 * 60);
+    expect(gap!.durationSeconds).toBeLessThanOrEqual(13 * 60);
+  });
+
+  it('leaves a hole longer than the grace as a genuine gap', () => {
+    const events: ActivityEvent[] = [
+      afk(T0, 10, false),
+      win(T0, 10, 'excel.exe', 'Book1.xlsx'),
+      // 40-minute hole — being gone, not a pause
+      afk(T0 + 50 * MIN, 10, false),
+      win(T0 + 50 * MIN, 10, 'excel.exe', 'Book1.xlsx'),
+    ];
+    const out = normalizeEvents(events);
+    expect(out.some((r) => (r.windowTitle ?? '').includes('sensor gap'))).toBe(false);
+  });
+
+  it('does not invent rows inside continuous coverage', () => {
+    const events: ActivityEvent[] = [
+      afk(T0, 30, false),
+      win(T0, 30, 'excel.exe', 'Book1.xlsx'),
+    ];
+    const out = normalizeEvents(events);
+    expect(out.some((r) => (r.windowTitle ?? '').includes('sensor gap'))).toBe(false);
+  });
+});

@@ -64,6 +64,10 @@ export function toRawEventInput(e: ActivityEvent): RawEventInput {
 
 export interface NormalizeOptions {
   mergeGapSeconds?: number;
+  /** Synthesize an idle "(sensor gap)" row for recording holes up to this long
+   *  (default 900s = the idle grace) so a short interruption counts as a pause
+   *  even when the machine slept instead of reporting AFK. */
+  bridgeHoleSeconds?: number;
 }
 
 interface Candidate {
@@ -310,7 +314,42 @@ export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions 
     }
   }
 
-  return merged.map((c) => {
+  // Bridge short SENSOR HOLES — wall-clock stretches where the machine recorded
+  // nothing at all (lid closed / Modern Standby / a watcher restart). Policy:
+  // an interruption under the idle grace means "still on whatever you were
+  // doing", and that must not depend on whether the laptop kept the sensor
+  // alive. A synthetic idle row makes the hole a first-class pause: the
+  // resolver's run/promotion logic then treats it exactly like recorded idle
+  // (short run -> promoted to worked and attributed like its surroundings;
+  // chained past the grace -> away). Holes longer than the grace are left as
+  // genuine gaps (sleep that long is being gone, not a pause).
+  const holeCap = (opts.bridgeHoleSeconds ?? 900) * 1000;
+  const bridged: Candidate[] = [];
+  for (let i = 0; i < merged.length; i++) {
+    const cur = merged[i]!;
+    const prev = bridged[bridged.length - 1];
+    if (
+      prev &&
+      cur.start - prev.end > gap && // a real hole, not merge jitter
+      cur.start - prev.end <= holeCap &&
+      cur.hostname === prev.hostname
+    ) {
+      bridged.push({
+        start: prev.end,
+        end: cur.start,
+        app: null,
+        title: '(sensor gap — machine asleep?)',
+        url: null,
+        browser: null,
+        isAfk: true,
+        hostname: cur.hostname,
+        source: cur.source,
+      });
+    }
+    bridged.push(cur);
+  }
+
+  return bridged.map((c) => {
     const startTs = new Date(c.start).toISOString();
     const endTs = new Date(c.end).toISOString();
     return {
