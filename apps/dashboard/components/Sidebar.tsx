@@ -11,6 +11,7 @@ const NAV = [
   { href: '/range/week/today', prefix: '/range', ico: '📊', label: 'Reporting', ownerOnly: false },
   { href: '/raw/today', prefix: '/raw', ico: '🗂️', label: 'Raw Data', ownerOnly: false },
   { href: '/rules', prefix: '/rules', ico: '📏', label: 'Manual Rules', ownerOnly: false },
+  { href: '/oos', prefix: '/oos', ico: '💵', label: 'Out of Scope Billings', ownerOnly: false },
   { href: '/settings', prefix: '/settings', ico: '⚙️', label: 'Settings', ownerOnly: true },
   { href: '/how', prefix: '/how', ico: '❓', label: 'How this works', ownerOnly: false },
 ];

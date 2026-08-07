@@ -159,3 +159,31 @@ export async function listManualEntries(date: string, host?: string | null): Pro
   );
   return res.rows as ManualEntryRow[];
 }
+
+export interface OosBillingRow {
+  id: string;
+  clientName: string;
+  amountCents: number | null; // null = amount not known yet
+  note: string | null;
+  createdBy: string;
+  createdAt: string;
+  billed: boolean;
+  billedBy: string | null;
+  billedAt: string | null;
+}
+
+/** Out-of-scope billings ledger: open items first (oldest debt on top), then
+ *  everything already billed (newest first). One query, split in the page. */
+export async function listOosBillings(): Promise<OosBillingRow[]> {
+  const { pool, schema } = getDb();
+  const res = await pool.query(
+    `select o.id, c.name as "clientName",
+            o.amount_cents::float as "amountCents", o.note,
+            o.created_by as "createdBy", o.created_at as "createdAt",
+            o.billed, o.billed_by as "billedBy", o.billed_at as "billedAt"
+       from ${schema}.oos_billings o
+       join public.clients c on c.id = o.client_id
+      order by o.billed asc, case when o.billed then o.billed_at end desc nulls last, o.created_at asc`,
+  );
+  return res.rows as OosBillingRow[];
+}

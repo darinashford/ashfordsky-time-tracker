@@ -556,3 +556,75 @@ export async function deleteManualEntryAction(fd: FormData): Promise<void> {
   revalidatePath(`/day/${date}`);
   revalidatePath(`/raw/${date}`);
 }
+
+// ---------------------------------------------------------------------------
+// Out-of-scope billings — a shared checklist, not time data. Any staff member
+// can log one and check one off (same trust model as Manual Rules: the app is
+// behind SSO and every write records who did it).
+
+/** "$1,234.56" / "1234" / "1,234" → cents, or null for blank/unparseable
+ *  ("we need to bill this but don't know how much yet"). */
+function parseMoneyToCents(raw: string): number | null {
+  const cleaned = raw.replace(/[$,\s]/g, '');
+  if (!cleaned) return null;
+  const n = Number(cleaned);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(n * 100);
+}
+
+export async function addOosBillingAction(fd: FormData): Promise<void> {
+  const { pool, schema } = getDb();
+  const clientId = str(fd, 'clientId');
+  if (!clientId) return;
+  const amountCents = parseMoneyToCents(str(fd, 'amount'));
+  const note = str(fd, 'note').trim() || null;
+  const who = (await getViewerScope()).email ?? 'local';
+  await pool.query(
+    `insert into ${schema}.oos_billings (client_id, amount_cents, note, created_by)
+     values ($1, $2, $3, $4)`,
+    [clientId, amountCents, note, who],
+  );
+  revalidatePath('/oos');
+}
+
+/** Check an item off as invoiced. An amount typed at billing time fills in (or
+ *  corrects) the stored one — that's when you finally know the number. */
+export async function markOosBilledAction(fd: FormData): Promise<void> {
+  const { pool, schema } = getDb();
+  const id = str(fd, 'id');
+  if (!id) return;
+  const amountCents = parseMoneyToCents(str(fd, 'amount'));
+  const who = (await getViewerScope()).email ?? 'local';
+  await pool.query(
+    `update ${schema}.oos_billings
+        set billed = true, billed_by = $2, billed_at = now(),
+            amount_cents = coalesce($3, amount_cents), updated_at = now()
+      where id = $1 and not billed`,
+    [id, who, amountCents],
+  );
+  revalidatePath('/oos');
+}
+
+/** Un-check (billed by mistake): back to the open list, audit fields cleared. */
+export async function undoOosBilledAction(fd: FormData): Promise<void> {
+  const { pool, schema } = getDb();
+  const id = str(fd, 'id');
+  if (!id) return;
+  await pool.query(
+    `update ${schema}.oos_billings
+        set billed = false, billed_by = null, billed_at = null, updated_at = now()
+      where id = $1 and billed`,
+    [id],
+  );
+  revalidatePath('/oos');
+}
+
+/** Remove an OPEN entry (logged in error). Billed rows are history — un-check
+ *  first if one truly has to go, so removal is always a visible two-step. */
+export async function removeOosBillingAction(fd: FormData): Promise<void> {
+  const { pool, schema } = getDb();
+  const id = str(fd, 'id');
+  if (!id) return;
+  await pool.query(`delete from ${schema}.oos_billings where id = $1 and not billed`, [id]);
+  revalidatePath('/oos');
+}
