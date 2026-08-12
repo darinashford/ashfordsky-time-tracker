@@ -489,6 +489,10 @@ export async function loadClientGraph(
        left join public.calendar_event_attendees cea on cea.calendar_event_id = ce.id
       where ce.start_at > now() - interval '45 days'
         and ce.end_at is not null
+        -- A calendar event exempts no-input time from the away cutoff, so an
+        -- all-day or multi-hour placeholder would bill a client for a documented
+        -- absence. Only humanly-attended meeting lengths qualify.
+        and ce.end_at - ce.start_at between interval '1 minute' and interval '4 hours'
       group by ce.id, ce.subject, ce.start_at, ce.end_at, ce.organizer_email`,
   );
   for (const r of calRows.rows as Array<{

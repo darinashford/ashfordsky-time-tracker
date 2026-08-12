@@ -253,7 +253,7 @@ export async function getCategoryBreakdown(
             sum(i.duration_seconds)::int as seconds
        from ${s}.intervals i
        join ${s}.resolutions r on r.interval_id = i.id
-      where i.is_afk = false
+      where (i.is_afk = false or i.afk_promoted)
         and (r.status = 'nonbillable' or r.is_billable = false)
         and (i.start_ts at time zone $2)::date = $1::date
         and ($3::text is null or i.hostname = $3)
@@ -539,7 +539,7 @@ export async function getTopUnresolved(
             sum(i.duration_seconds)::int as seconds
        from ${s}.intervals i
        left join ${s}.resolutions r on r.interval_id = i.id
-      where i.is_afk = false
+      where (i.is_afk = false or i.afk_promoted)
         and (r.id is null or r.status in ('unresolved','needs_review'))
         and (i.start_ts at time zone $2)::date = $1::date
         and ($4::text is null or i.hostname = $4)

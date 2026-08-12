@@ -179,7 +179,9 @@ const MEETING_APPS = ['teams', 'zoom', 'webex', 'meet', 'slack', 'quo', 'openpho
 // Real-time call apps (chat-only apps like Slack are excluded). A call on one of
 // these that doesn't resolve to a client or name a staff member is time with a
 // prospect or vendor we can't identify yet.
-const CALL_APPS = ['teams', 'zoom', 'webex', 'openphone', 'krisp', 'ringcentral', 'gotomeeting', 'dialpad', 'whereby'];
+// 'quo' = OpenPhone's rebrand (Quo.exe) — missing it meant a 45-min phone call
+// read as plain idle and was dropped past the grace instead of counting.
+const CALL_APPS = ['teams', 'zoom', 'webex', 'openphone', 'quo', 'krisp', 'ringcentral', 'gotomeeting', 'dialpad', 'whereby'];
 // Browser-hosted meetings: the call runs in a tab, so the app is the browser and
 // the signal is the host (or a Google Meet "Meet - …" tab title when no URL was
 // captured). Native Teams/Zoom are already covered by CALL_APPS above.

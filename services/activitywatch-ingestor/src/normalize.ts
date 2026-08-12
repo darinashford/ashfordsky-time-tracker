@@ -238,6 +238,28 @@ export function normalizeEvents(events: ActivityEvent[], opts: NormalizeOptions 
         }
         if (cur < end) segs.push({ s: cur, e: end, afk: true });
         if (segs.length === 0) segs.push({ s: start, e: end, afk: true });
+        // Coalesce sub-5s slivers left by misaligned watcher polls. A 300ms
+        // "active" blip inside a long idle stretch would TERMINATE the
+        // resolver's idle-run chaining, splitting one 28-min absence into two
+        // sub-grace runs that each get promoted to worked. Absorb the sliver
+        // into its predecessor so runs reflect the human, not poll jitter.
+        if (segs.length > 1) {
+          const MIN_SEG_MS = 5_000;
+          const clean: typeof segs = [segs[0]!];
+          for (let k = 1; k < segs.length; k++) {
+            const sg = segs[k]!;
+            const prev = clean[clean.length - 1]!;
+            if (sg.e - sg.s < MIN_SEG_MS) {
+              prev.e = sg.e; // absorb forward into the previous segment
+            } else if (prev.e - prev.s < MIN_SEG_MS && clean.length === 1) {
+              clean[0] = { ...sg, s: prev.s }; // leading sliver absorbs backward
+            } else {
+              clean.push(sg);
+            }
+          }
+          segs.length = 0;
+          segs.push(...clean);
+        }
       }
 
       // A locked screen is never active, whatever the afk feed carried across.

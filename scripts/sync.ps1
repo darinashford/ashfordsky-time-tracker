@@ -36,18 +36,39 @@ if ($Days -gt 0) {
   $resolveArgs = @('--days', "$Days")
   Log "==== sync start (rolling ${Days}d) ===="
 } else {
-  $tz = [System.TimeZoneInfo]::FindSystemTimeZoneById('Mountain Standard Time')  # America/Denver (+DST)
-  $nowLocal = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $tz)
-  $today = $nowLocal.ToString('yyyy-MM-dd')
-  $sinceUtc = [System.TimeZoneInfo]::ConvertTimeToUtc($nowLocal.Date, $tz)
-  $since = $sinceUtc.ToString("yyyy-MM-ddTHH:mm:ss.fff'Z'")
-  $ingestArgs = @('--since', $since)
-  $resolveArgs = @('--date', $today)
-  Log "==== sync start (today $today, since $since) ===="
+  # ROLLING 24h window, never a fixed local-midnight --since. The ingestor's
+  # window-edge guard drops blocks starting in the first 30 min of the window
+  # on the assumption an earlier, deeper cycle already captured them - true for
+  # a rolling window (the edge moves every 10 min), FALSE for a fixed midnight
+  # start, which silently deleted the first ~30 minutes of every single day.
+  # Resolver covers 2 days so the part of the window before midnight stays
+  # consistent too.
+  $ingestArgs = @()
+  $resolveArgs = @('--days', '2')
+  # Watermark catch-up: if the machine was off/failing for longer than the
+  # rolling window, widen this run to cover the whole gap so nothing is lost.
+  $wmFile = Join-Path $dataDir 'sync-watermark.txt'
+  if (Test-Path -LiteralPath $wmFile) {
+    try {
+      $last = [DateTime]::Parse((Get-Content -LiteralPath $wmFile -Raw).Trim()).ToUniversalTime()
+      $gapH = ([DateTime]::UtcNow - $last).TotalHours
+      if ($gapH -gt 20) {
+        $d = [Math]::Min(14, [Math]::Ceiling($gapH / 24) + 1)
+        $ingestArgs = @('--days', "$d")
+        $resolveArgs = @('--days', "$d")
+        Log "watermark gap ${gapH}h -> catch-up ${d}d"
+      }
+    } catch { Log "watermark unreadable; using rolling window" }
+  }
+  Log "==== sync start (rolling 24h) ===="
 }
 
 corepack pnpm exec tsx 'services/activitywatch-ingestor/src/index.ts' @ingestArgs 2>&1 | Add-Content -LiteralPath $log
 Log "ingest exit=$LASTEXITCODE"
+if ($LASTEXITCODE -eq 0) {
+  # Only advance the watermark on success, so a broken stretch widens the next run.
+  [DateTime]::UtcNow.ToString('o') | Set-Content -LiteralPath (Join-Path $dataDir 'sync-watermark.txt')
+}
 # Capture + OCR fresh email windows BEFORE resolve, so a sender read off the
 # screen attributes that email the same cycle. Today mode only (capturing "now"
 # is meaningless for a historical backfill). Respects SCREENSHOTS_ENABLED.

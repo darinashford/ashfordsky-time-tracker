@@ -6,7 +6,7 @@
 //   ACTIVITYWATCH_URL (optional, default http://localhost:5600)
 // Phase 3 packages this into a one-file installer; for now it runs via tsx.
 import { execSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import dotenv from 'dotenv';
 import { loadConfig } from '@tt/shared';
@@ -66,9 +66,25 @@ async function main(): Promise<void> {
 
   const now = new Date();
   const until = now.toISOString();
-  // Trailing ~26h window; the server upserts in place and only prunes today, so a
-  // generous window is safe and self-heals any missed cycle.
-  const since = new Date(now.getTime() - 26 * 3_600_000).toISOString();
+  // Trailing ~26h window, WIDENED by a persisted watermark of the last
+  // successful post: without it, a machine that is offline or failing for
+  // longer than the window permanently lost days 1..N-1 (only the final 26h
+  // were ever fetched). The watermark only ever WIDENS the window - a healthy
+  // agent still sends the plain 26h - and the 1h overlap keeps the window-edge
+  // guard's premise true (everything at the edge was captured pre-downtime).
+  const wmPath = resolve(process.cwd(), '.data', 'agent-watermark.json');
+  let lastUntilMs = 0;
+  try {
+    lastUntilMs = Date.parse((JSON.parse(readFileSync(wmPath, 'utf8')) as { lastUntil?: string }).lastUntil ?? '');
+  } catch {
+    /* first run / unreadable -> plain window */
+  }
+  const plainSince = now.getTime() - 26 * 3_600_000;
+  const floor = now.getTime() - 14 * 24 * 3_600_000; // cap a huge gap at 14d
+  const sinceMs = Number.isFinite(lastUntilMs) && lastUntilMs > 0
+    ? Math.max(floor, Math.min(plainSince, lastUntilMs - 3_600_000))
+    : plainSince;
+  const since = new Date(sinceMs).toISOString();
 
   const adapter = new ActivityWatchAdapter(cfg.activitywatchUrl);
   const events = await adapter.fetchEvents({ since, until });
@@ -95,6 +111,14 @@ async function main(): Promise<void> {
   if (!res.ok) {
     console.error(`[agent] ingest failed (HTTP ${res.status}): ${text}`);
     process.exit(1);
+  }
+  // Success: advance the watermark. On failure we exit above, so the next run
+  // widens back to everything since the last success.
+  try {
+    mkdirSync(resolve(process.cwd(), '.data'), { recursive: true });
+    writeFileSync(wmPath, JSON.stringify({ lastUntil: until }));
+  } catch (e) {
+    console.warn('[agent] could not persist watermark:', e instanceof Error ? e.message : e);
   }
   let parsed: { rotateToken?: string } = {};
   try {

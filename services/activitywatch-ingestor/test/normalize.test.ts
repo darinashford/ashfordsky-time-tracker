@@ -169,3 +169,19 @@ describe('normalizeEvents — sensor holes (machine slept, nothing recorded)', (
     expect(out.some((r) => (r.windowTitle ?? '').includes('sensor gap'))).toBe(false);
   });
 });
+
+describe('normalizeEvents — poll-jitter slivers must not split idle runs', () => {
+  it('absorbs a 2-second active blip inside a long idle stretch', () => {
+    const events: ActivityEvent[] = [
+      win(T0, 30, 'excel.exe', 'Book1.xlsx'),
+      afk(T0, 10, true),
+      afk(T0 + 10 * MIN, 2 / 60, false), // 2s "active" reading — watcher jitter
+      afk(T0 + 10 * MIN + 2_000 / MIN / 1, 10, true),
+    ];
+    const out = normalizeEvents(events);
+    // No worked sliver under 5s may exist: it would terminate the resolver's
+    // idle-run chaining and split one 20-min absence into two promotable runs.
+    const slivers = out.filter((r) => !r.isAfk && r.durationSeconds > 0 && r.durationSeconds < 5);
+    expect(slivers).toHaveLength(0);
+  });
+});

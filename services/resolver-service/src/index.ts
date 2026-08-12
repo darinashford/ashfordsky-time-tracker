@@ -235,10 +235,10 @@ async function main(): Promise<void> {
           // — a meeting, a call, or reading a client's work — and promote it into
           // active time; leave no-window filler, locked/personal, and long
           // stretches (> away cutoff, and not a live call) as away.
-          if (!iv.app || iv.durationSeconds < cfg.minIntervalSeconds) continue;
-          // Respect a manual attribution on idle time too: promote it so it counts,
-          // and don't re-resolve over your decision — a call you confirmed keeps its
-          // client through the listening (idle) stretches instead of reverting.
+          // Respect a manual attribution FIRST — before the app/min-length skip.
+          // App-less filler (RDP sessions, secure desktop, sensor gaps) that you
+          // explicitly assigned in Raw Data used to hit the skip below and get
+          // demoted from Worked on every cycle while still showing its client.
           const priorIdle = existing.get(iv.id);
           if (priorIdle && priorIdle.resolverVersion === 'manual') {
             promotedIds.push(iv.id);
@@ -252,6 +252,12 @@ async function main(): Promise<void> {
                 needsReview: false,
               });
             }
+            continue;
+          }
+          // App-less or sub-minimum idle stays away — and must not keep a stale
+          // billable resolution or an open review item behind it.
+          if (!iv.app || iv.durationSeconds < cfg.minIntervalSeconds) {
+            await clearIfResolved(iv.id);
             continue;
           }
           const sg = extractSignals(iv);
@@ -516,6 +522,10 @@ async function main(): Promise<void> {
               best = a;
             }
           }
+          // A call app can be "on screen" all day (Teams chat), so a run is not
+          // proof of one continuous conversation. An hour past the nearest
+          // identified meeting is a different conversation — stop inheriting.
+          if (bestGap > 60 * 60_000) continue;
           const clientName = graph.clients.get(best.r.clientId!)?.name ?? 'this client';
           const runRes: Resolution = {
             intervalId: iv.id,

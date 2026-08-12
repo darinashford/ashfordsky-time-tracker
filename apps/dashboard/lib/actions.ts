@@ -436,12 +436,17 @@ export async function manualEntryAction(fd: FormData): Promise<void> {
 
   const startTs = zonedToUtc(date, start, cfg.timezone);
   const endTs = new Date(startTs.getTime() + minutes * 60_000);
+  // Deterministic key: a double-click or resubmit UPDATES the same entry
+  // instead of silently double-counting the same minutes (the old key was a
+  // random UUID per submission).
+  const dedupeKey = `manual|${host ?? ''}|${startTs.toISOString()}|${minutes}|${clientId}`;
   const ins = await pool.query(
     `insert into ${schema}.intervals
        (source,hostname,start_ts,end_ts,duration_seconds,app,window_title,url,browser,is_afk,dedupe_key)
      values ('manual',$1,$2::timestamptz,$3::timestamptz,$4,'Manual entry',$5,null,null,false,$6)
+     on conflict (dedupe_key) do update set window_title = excluded.window_title
      returning id`,
-    [host, startTs.toISOString(), endTs.toISOString(), minutes * 60, note || 'Manual entry', `manual|${crypto.randomUUID()}`],
+    [host, startTs.toISOString(), endTs.toISOString(), minutes * 60, note || 'Manual entry', dedupeKey],
   );
   const intervalId = ins.rows[0].id as string;
   const res: Resolution = {
