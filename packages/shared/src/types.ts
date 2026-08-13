@@ -85,6 +85,8 @@ export interface Interval {
   url?: string | null;
   browser?: string | null;
   isAfk: boolean;
+  /** Resolver grace-promotion: sensor said AFK but the pause counts as worked. */
+  afkPromoted?: boolean | null;
   rawEventIds?: string[];
 }
 

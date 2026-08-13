@@ -301,7 +301,7 @@ export async function getIntervalsForDay(
 ): Promise<Interval[]> {
   const s = validIdent(schema);
   const res = await pool.query(
-    `select id, source, hostname, start_ts as "startTs", end_ts as "endTs",
+    `select id, source, hostname, start_ts as "startTs", end_ts as "endTs", afk_promoted as "afkPromoted",
             duration_seconds as "durationSeconds", app, window_title as "windowTitle",
             url, browser, is_afk as "isAfk"
        from ${s}.intervals

@@ -150,7 +150,10 @@ async function main(): Promise<void> {
       // or a soft non-billable bucket that might really be a client / firm tooling.
       const residual: Interval[] = [];
       for (const iv of intervals) {
-        if (iv.isAfk) continue;
+        // Worked = sensor-active OR grace-promoted. Bare isAfk here would skip
+        // promoted pauses whose blocks resolved residual — they're worked time
+        // that deserves classification like any other.
+        if (iv.isAfk && !iv.afkPromoted) continue;
         if (iv.durationSeconds < cfg.minIntervalSeconds) continue;
         if (!iv.app && !iv.windowTitle) continue; // nothing to read
         const r = resolutions.get(iv.id);
