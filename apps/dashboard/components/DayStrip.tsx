@@ -1,18 +1,22 @@
 import { secondsToHours } from '@tt/shared';
-import { DayStripView, type PreparedStripSegment, type PreparedStripTick } from './DayStripView';
+import { DayStripView, type PreparedStripCell, type PreparedStripSegment, type PreparedStripTick } from './DayStripView';
 import { WorkdayColumnsView, type PreparedDay, type PreparedTick } from './WorkdayColumnsView';
 
 /**
- * "When did they work" strips, color-coded —
+ * "When did they work" strips —
  *   green  = billable client time (any client-attributed block, incl. Uncertain)
  *   slate  = non-billable + unattributed worked time
- *   track  = translucent gray: Away / off (any no-input stretch past the
- *            15-min grace, locked, or simply not there)
- * There are exactly TWO worked states — billable and non-billable; idle is not
- * a status. The day runs 5:00 AM → 1:00 AM (MT) in 5-minute bins; each bin
- * takes its dominant category so the strip reads as clean runs, not slivers.
+ *   track  = translucent gray: Away / off (no-input past the 15-min grace,
+ *            locked, or simply not there)
+ * The day runs 5:00 AM → 1:00 AM (MT) in 5-minute cells. Each cell is painted
+ * PROPORTIONALLY: a slate band sized to its non-billable share sits on top of
+ * the green. The old winner-take-all cell coloring buried the minority — a day
+ * with 1.7h of scattered email showed almost no slate because green won nearly
+ * every mixed cell, so the strip visibly disagreed with the Non-billable card.
+ * Proportional cells make strip mass equal card mass by construction.
  * Worked = sensor-active OR grace-promoted (afk_promoted — migration 0015).
- * Clicking any stretch — worked OR away — shows a bubble with its duration.
+ * Clicking any stretch — worked or away — shows a bubble with its duration,
+ * split into billable / non-billable for worked stretches.
  *
  * `DayStrip` (via buildDayModel) is the horizontal single-day bar (Today).
  * `WorkdayColumns` is the multi-day Reporting version: one vertical bar per day.
@@ -23,16 +27,10 @@ const DAY_END_MIN = 25 * 60; // 1:00 AM next day
 const BIN_MIN = 5;
 const N_BINS = (DAY_END_MIN - DAY_START_MIN) / BIN_MIN;
 
-type Cat = 'billable' | 'nonbillable';
-
-const COLOR: Record<Cat, string> = {
+const COLOR = {
   billable: '#1f8a4c',
   nonbillable: '#566573',
-};
-const LABEL: Record<Cat, string> = {
-  billable: 'Billable',
-  nonbillable: 'Non-billable / unattributed',
-};
+} as const;
 
 // Any client-attributed block is billable, including low-confidence (needs_review)
 // ones — confidence is a review signal, not a billing gate. Matches the
@@ -53,16 +51,28 @@ export interface StripInput {
   status: string | null;
 }
 
-interface Segment {
-  cat: Cat;
+/** One contiguous painted run of cells, carrying the REAL seconds of both
+ *  categories inside it — the unit of clicking/bubbles. */
+interface Stretch {
   from: number; // bin index (inclusive)
   to: number; // bin index (exclusive)
-  seconds: number; // real seconds of this category inside the segment
+  billableSec: number;
+  nonbillableSec: number;
 }
 
-/** A prepared day model for the Today strip. */
+/** A run of adjacent cells sharing the same (quantized) non-billable share —
+ *  the unit of painting. Quantizing to 10% steps keeps the DOM small enough
+ *  for a month of Reporting columns. */
+interface CellRun {
+  from: number;
+  to: number;
+  grayFrac: number; // 0..1 share of the cells' worked seconds that is non-billable
+}
+
+/** A prepared day model for the strips. */
 export interface DayModel {
-  segments: Segment[];
+  cellRuns: CellRun[];
+  stretches: Stretch[];
 }
 
 /** Minutes since local midnight of `day` for an ISO timestamp, in `tz`. */
@@ -100,21 +110,20 @@ function fmtDur(seconds: number): string {
   return `${Math.floor(m / 60)}h ${m % 60 ? `${m % 60}m` : ''}`.trim();
 }
 
-/**
- * Classify one day's rows and bin them. Worked (not AFK, or AFK but
- * grace-promoted) → billable / nonbillable. Everything else — idle past the
- * grace, locked, gone — is Away/off: unpainted track, clickable via a ghost
- * segment so its duration is one click away.
- */
+interface BinTotals {
+  billable: number;
+  nonbillable: number;
+}
+
+/** Bin one day's rows into 5-min cells. Worked (not AFK, or AFK but
+ *  grace-promoted) → billable / nonbillable seconds per cell. Everything else —
+ *  idle past the grace, locked, gone — is Away/off and stays unpainted track. */
 export function buildDayModel(rows: StripInput[], day: string, tz: string): DayModel {
-  const bins: Array<Record<Cat, number>> = Array.from({ length: N_BINS }, () => ({
-    billable: 0,
-    nonbillable: 0,
-  }));
+  const bins: BinTotals[] = Array.from({ length: N_BINS }, () => ({ billable: 0, nonbillable: 0 }));
   for (const r of rows) {
     const worked = !r.isAfk || !!r.afkPromoted;
     if (!worked) continue; // Away / off -> track
-    const cat: Cat =
+    const cat: keyof BinTotals =
       r.clientId && r.isBillable !== false && BILLABLE_STATUSES.has(r.status ?? '')
         ? 'billable'
         : 'nonbillable';
@@ -131,8 +140,7 @@ export function buildDayModel(rows: StripInput[], day: string, tz: string): DayM
       if (overlap > 0) bins[b]![cat] += overlap * 60;
     }
   }
-
-  return { segments: mergeBinTotals(bins) };
+  return modelFromBins(bins);
 }
 
 /** Server-aggregated strip bins (see @tt/db getRangeStripBins) — worked seconds
@@ -143,101 +151,108 @@ export interface BinnedInput {
   nonbillableSeconds: number;
 }
 
-/** Same dominance + merge rules, from pre-aggregated bins — so Reporting never
- *  ships raw interval rows to render the strips. (No idle channel here: the
- *  Reporting columns show worked time only.) */
-export function segmentsFromBins(binRows: BinnedInput[]): Segment[] {
-  const bins: Array<Record<Cat, number>> = Array.from({ length: N_BINS }, () => ({
-    billable: 0,
-    nonbillable: 0,
-  }));
+/** Same rules, from pre-aggregated bins — so Reporting never ships raw interval
+ *  rows to render the strips. */
+export function modelFromBinRows(binRows: BinnedInput[]): DayModel {
+  const bins: BinTotals[] = Array.from({ length: N_BINS }, () => ({ billable: 0, nonbillable: 0 }));
   for (const b of binRows) {
     if (b.bin < 0 || b.bin >= N_BINS) continue;
     bins[b.bin]!.billable += b.billableSeconds;
     bins[b.bin]!.nonbillable += b.nonbillableSeconds;
   }
-  return mergeBinTotals(bins);
+  return modelFromBins(bins);
 }
 
-/** Dominant category per 5-min bin, merged into contiguous same-category
- *  segments carrying their REAL seconds (for the click bubble). A bin paints
- *  only when it is MAJORITY covered (≥150s of its 300s): each painted bin then
- *  stands for ~5 real minutes and the bar's total length tracks the cards. */
-function mergeBinTotals(bins: Array<Record<Cat, number>>): Segment[] {
-  const PRIORITY: Cat[] = ['billable', 'nonbillable'];
-  const binCat: Array<Cat | null> = bins.map((b) => {
-    const total = b.billable + b.nonbillable;
-    if (total < 150) return null; // minority-covered bin -> gap
-    let best: Cat = 'billable';
-    let bestV = -1;
-    for (const c of PRIORITY) {
-      if (b[c] > bestV) {
-        bestV = b[c];
-        best = c;
-      }
-    }
-    return best;
-  });
+/** Cells paint when MAJORITY covered (≥150s of 300s) so bar length tracks the
+ *  cards; short interior gaps are absorbed (no sub-grace Away slivers — see the
+ *  15-min policy); painted runs become stretches (clicking) and quantized
+ *  cell-runs (painting). */
+function modelFromBins(bins: BinTotals[]): DayModel {
+  const painted: boolean[] = bins.map((b) => b.billable + b.nonbillable >= 150);
+
   // INVARIANT: no visible Away sliver shorter than the 15-min grace. A short
-  // unpainted run BETWEEN painted bins can only be bin-rounding or a knife-edge
-  // idle run (e.g. 14.9 min chained just under the grace) — under the policy
-  // "gone < 15 min = still working" it must read as continuation, so absorb it
-  // into the preceding category. Real absences are >= 3 bins and stay gray.
+  // unpainted run BETWEEN painted cells is bin-rounding or a knife-edge idle
+  // run — under "gone < 15 min = still working" it reads as continuation.
   for (let b = 0; b < N_BINS; b++) {
-    if (binCat[b] != null) continue;
+    if (painted[b]) continue;
     let e = b;
-    while (e < N_BINS && binCat[e] == null) e++;
-    const prev = b > 0 ? binCat[b - 1] : null;
-    const next = e < N_BINS ? binCat[e] : null;
-    if (prev && next && e - b < 3) {
-      for (let i = b; i < e; i++) binCat[i] = prev;
+    while (e < N_BINS && !painted[e]) e++;
+    if (b > 0 && painted[b - 1] && e < N_BINS && e - b < 3) {
+      for (let i = b; i < e; i++) painted[i] = true;
     }
     b = e;
   }
-  const segments: Segment[] = [];
+
+  const stretches: Stretch[] = [];
+  const cellRuns: CellRun[] = [];
+  const quant = (b: BinTotals): number => {
+    const tot = b.billable + b.nonbillable;
+    if (tot <= 0) return 0; // absorbed gap cell: paint as pure carry (green)
+    return Math.round((b.nonbillable / tot) * 10) / 10; // 10% steps
+  };
   for (let b = 0; b < N_BINS; b++) {
-    const c = binCat[b];
-    if (!c) continue;
-    const secs = bins[b]![c];
-    const last = segments[segments.length - 1];
-    if (last && last.cat === c && last.to === b) {
-      last.to = b + 1;
-      last.seconds += secs;
+    if (!painted[b]) continue;
+    const s = stretches[stretches.length - 1];
+    if (s && s.to === b) {
+      s.to = b + 1;
+      s.billableSec += bins[b]!.billable;
+      s.nonbillableSec += bins[b]!.nonbillable;
     } else {
-      segments.push({ cat: c, from: b, to: b + 1, seconds: secs });
+      stretches.push({ from: b, to: b + 1, billableSec: bins[b]!.billable, nonbillableSec: bins[b]!.nonbillable });
     }
+    const g = quant(bins[b]!);
+    const c = cellRuns[cellRuns.length - 1];
+    if (c && c.to === b && c.grayFrac === g) c.to = b + 1;
+    else cellRuns.push({ from: b, to: b + 1, grayFrac: g });
   }
-  return segments;
+  return { cellRuns, stretches };
 }
 
 const binToMin = (bin: number) => DAY_START_MIN + bin * BIN_MIN;
 const pctOfDay = (bin: number) => (bin / N_BINS) * 100;
 
-function prepareSegments(segments: Segment[]): PreparedStripSegment[] {
+/** Bubble copy for a worked stretch: total, then the split when it's mixed. */
+function stretchLabels(s: Stretch): { durLabel: string; catLabel: string } {
+  const total = s.billableSec + s.nonbillableSec;
+  const durLabel = fmtDur(total);
+  if (s.nonbillableSec < 30) return { durLabel, catLabel: 'Billable' };
+  if (s.billableSec < 30) return { durLabel, catLabel: 'Non-billable / unattributed' };
+  return { durLabel, catLabel: `${fmtDur(s.billableSec)} billable · ${fmtDur(s.nonbillableSec)} non-billable` };
+}
+
+function prepareCells(cellRuns: CellRun[]): PreparedStripCell[] {
+  return cellRuns.map((c) => ({
+    leftPct: pctOfDay(c.from),
+    widthPct: pctOfDay(c.to - c.from),
+    grayFrac: c.grayFrac,
+  }));
+}
+
+/** Click overlays: one per worked stretch (with the billable/non-billable split
+ *  in the bubble) and one Away ghost per gap BETWEEN stretches. All transparent —
+ *  the cells underneath are the paint. */
+function prepareOverlays(stretches: Stretch[]): PreparedStripSegment[] {
   const out: PreparedStripSegment[] = [];
   const pushAway = (from: number, to: number) => {
     if (to <= from) return;
     out.push({
       leftPct: pctOfDay(from),
       widthPct: pctOfDay(to - from),
-      color: 'transparent', // the gray track IS the color; this is the click target
       ghost: true,
       durLabel: fmtDur((to - from) * BIN_MIN * 60),
       catLabel: 'Away / off',
       rangeLabel: `${fmtMin(binToMin(from))}–${fmtMin(binToMin(to))}`,
     });
   };
-  // Away ghosts only BETWEEN painted work — the empty early morning and the
-  // night after the last block aren't "away stretches" worth a bubble.
   let cursor: number | null = null;
-  for (const s of segments) {
+  for (const s of stretches) {
     if (cursor != null) pushAway(cursor, s.from);
+    const { durLabel, catLabel } = stretchLabels(s);
     out.push({
       leftPct: pctOfDay(s.from),
       widthPct: pctOfDay(s.to - s.from),
-      color: COLOR[s.cat],
-      durLabel: fmtDur(s.seconds),
-      catLabel: LABEL[s.cat],
+      durLabel,
+      catLabel,
       rangeLabel: `${fmtMin(binToMin(s.from))}–${fmtMin(binToMin(s.to))}`,
     });
     cursor = s.to;
@@ -255,12 +270,27 @@ function prepareTicks(stepMin: number): PreparedStripTick[] {
 
 /** Horizontal Today strip from a prepared day model (click a block → bubble). */
 export function DayStrip({ model, label }: { model: DayModel; label?: string }) {
-  return <DayStripView segments={prepareSegments(model.segments)} ticks={prepareTicks(60)} label={label} />;
+  return (
+    <DayStripView
+      cells={prepareCells(model.cellRuns)}
+      segments={prepareOverlays(model.stretches)}
+      ticks={prepareTicks(60)}
+      label={label}
+    />
+  );
 }
 
 /** Same horizontal strip, from server-aggregated bins (Reporting's day view). */
 export function DayStripBinned({ bins, label }: { bins: BinnedInput[]; label?: string }) {
-  return <DayStripView segments={prepareSegments(segmentsFromBins(bins))} ticks={prepareTicks(60)} label={label} />;
+  const model = modelFromBinRows(bins);
+  return (
+    <DayStripView
+      cells={prepareCells(model.cellRuns)}
+      segments={prepareOverlays(model.stretches)}
+      ticks={prepareTicks(60)}
+      label={label}
+    />
+  );
 }
 
 /** Multi-day "when did they work" view: one vertical bar per day. Used on
@@ -282,17 +312,17 @@ export function WorkdayColumns({
     ticks.push({ label: fmtMin(m), topPct: ((m - DAY_START_MIN) / span) * 100 }); // every 2h
   }
   const prepared: PreparedDay[] = days.map((d) => {
-    const segments = segmentsFromBins(d.bins);
+    const model = modelFromBinRows(d.bins);
     return {
       key: d.day,
       label: d.label,
       sublabel: d.sublabel,
       // Worked total from coverage_report — ties to the "Worked" card exactly.
       workedLabel: `${secondsToHours(d.workedSeconds).toFixed(2)}h`,
-      segments: segments.map((s) => ({
-        topPct: pctOfDay(s.from),
-        heightPct: pctOfDay(s.to - s.from),
-        color: COLOR[s.cat],
+      cells: model.cellRuns.map((c) => ({
+        topPct: pctOfDay(c.from),
+        heightPct: pctOfDay(c.to - c.from),
+        grayFrac: c.grayFrac,
       })),
     };
   });

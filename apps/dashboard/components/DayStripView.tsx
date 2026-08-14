@@ -7,12 +7,19 @@ import { useState } from 'react';
 export interface PreparedStripSegment {
   leftPct: number;
   widthPct: number;
-  color: string;
   durLabel: string; // "47m" / "1h 20m" — real seconds (worked) or span (away)
-  catLabel: string; // "Billable" / "Away / off" / …
+  catLabel: string; // "Billable" / "1h 2m billable · 14m non-billable" / "Away / off"
   rangeLabel: string; // "9:05a–9:50a"
-  /** An Away/off stretch: invisible click target over the gray track. */
+  /** An Away/off stretch (gap between work) rather than a worked stretch. */
   ghost?: boolean;
+}
+
+/** One painted run of 5-min cells: green with a slate band on top sized to its
+ *  non-billable share, so the bar's gray MASS equals the Non-billable card. */
+export interface PreparedStripCell {
+  leftPct: number;
+  widthPct: number;
+  grayFrac: number; // 0..1
 }
 export interface PreparedStripTick {
   label: string;
@@ -27,10 +34,12 @@ const POPUP_ZONE = 46; // headroom above the bar for the click bubble
  * how long it was; click it again (or another block) to move/dismiss it.
  */
 export function DayStripView({
+  cells,
   segments,
   ticks,
   label,
 }: {
+  cells: PreparedStripCell[];
   segments: PreparedStripSegment[];
   ticks: PreparedStripTick[];
   label?: string;
@@ -95,6 +104,34 @@ export function DayStripView({
           overflow: 'hidden',
         }}
       >
+        {/* paint layer: proportional cells (green + slate band by share) */}
+        {cells.map((c, i) => (
+          <span
+            key={`c${i}`}
+            style={{
+              position: 'absolute',
+              left: `${c.leftPct}%`,
+              width: `${c.widthPct}%`,
+              top: 0,
+              bottom: 0,
+              background: '#1f8a4c',
+            }}
+          >
+            {c.grayFrac > 0 && (
+              <span
+                style={{
+                  position: 'absolute',
+                  left: 0,
+                  right: 0,
+                  top: 0,
+                  height: `${Math.round(c.grayFrac * 100)}%`,
+                  background: '#566573',
+                }}
+              />
+            )}
+          </span>
+        ))}
+        {/* interaction layer: transparent stretch/ghost hit-areas + bubbles */}
         {segments.map((s, i) => (
           <span
             key={i}
@@ -108,10 +145,11 @@ export function DayStripView({
               width: `${s.widthPct}%`,
               top: 0,
               bottom: 0,
-              background: s.ghost ? 'transparent' : s.color,
+              background: 'transparent',
               cursor: 'pointer',
               outline: selected === i ? '2px solid #133048' : 'none',
               outlineOffset: -2,
+              zIndex: 1,
             }}
           />
         ))}
