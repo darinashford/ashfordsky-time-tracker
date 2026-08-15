@@ -14,12 +14,11 @@ export interface PreparedStripSegment {
   ghost?: boolean;
 }
 
-/** One painted run of 5-min cells: green with a slate band on top sized to its
- *  non-billable share, so the bar's gray MASS equals the Non-billable card. */
+/** One painted run of same-color cells (a solid bar piece). */
 export interface PreparedStripCell {
   leftPct: number;
   widthPct: number;
-  grayFrac: number; // 0..1
+  color: string;
 }
 export interface PreparedStripTick {
   label: string;
@@ -104,7 +103,7 @@ export function DayStripView({
           overflow: 'hidden',
         }}
       >
-        {/* paint layer: proportional cells (green + slate band by share) */}
+        {/* paint layer: solid one-color bar pieces */}
         {cells.map((c, i) => (
           <span
             key={`c${i}`}
@@ -114,22 +113,9 @@ export function DayStripView({
               width: `${c.widthPct}%`,
               top: 0,
               bottom: 0,
-              background: '#1f8a4c',
+              background: c.color,
             }}
-          >
-            {c.grayFrac > 0 && (
-              <span
-                style={{
-                  position: 'absolute',
-                  left: 0,
-                  right: 0,
-                  top: 0,
-                  height: `${Math.round(c.grayFrac * 100)}%`,
-                  background: '#566573',
-                }}
-              />
-            )}
-          </span>
+          />
         ))}
         {/* interaction layer: transparent stretch/ghost hit-areas + bubbles */}
         {segments.map((s, i) => (

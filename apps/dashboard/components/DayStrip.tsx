@@ -8,12 +8,16 @@ import { WorkdayColumnsView, type PreparedDay, type PreparedTick } from './Workd
  *   slate  = non-billable + unattributed worked time
  *   track  = translucent gray: Away / off (no-input past the 15-min grace,
  *            locked, or simply not there)
- * The day runs 5:00 AM → 1:00 AM (MT) in 5-minute cells. Each cell is painted
- * PROPORTIONALLY: a slate band sized to its non-billable share sits on top of
- * the green. The old winner-take-all cell coloring buried the minority — a day
- * with 1.7h of scattered email showed almost no slate because green won nearly
- * every mixed cell, so the strip visibly disagreed with the Non-billable card.
- * Proportional cells make strip mass equal card mass by construction.
+ * The day runs 5:00 AM → 1:00 AM (MT) in 5-minute cells, and every cell is ONE
+ * solid color — the strip reads as clean alternating bars. Colors are assigned
+ * by largest-remainder within each worked stretch: each category banks its real
+ * seconds and cells are paid out whole to whichever bank is fuller. A true
+ * 15-min admin stretch therefore paints as a 15-min slate bar; scattered email
+ * coalesces into occasional whole slate bars near where it happened; and the
+ * bar's slate MASS equals the Non-billable card (to ±1 cell per stretch). The
+ * old winner-take-all coloring hid the minority entirely (1.7h of scattered
+ * email showed almost no slate); plain per-cell proportional bands were
+ * mass-accurate but rendered as ragged caps.
  * Worked = sensor-active OR grace-promoted (afk_promoted — migration 0015).
  * Clicking any stretch — worked or away — shows a bubble with its duration,
  * split into billable / non-billable for worked stretches.
@@ -60,13 +64,11 @@ interface Stretch {
   nonbillableSec: number;
 }
 
-/** A run of adjacent cells sharing the same (quantized) non-billable share —
- *  the unit of painting. Quantizing to 10% steps keeps the DOM small enough
- *  for a month of Reporting columns. */
+/** A run of adjacent same-color cells — the unit of painting. */
 interface CellRun {
   from: number;
   to: number;
-  grayFrac: number; // 0..1 share of the cells' worked seconds that is non-billable
+  cat: 'billable' | 'nonbillable';
 }
 
 /** A prepared day model for the strips. */
@@ -184,12 +186,6 @@ function modelFromBins(bins: BinTotals[]): DayModel {
   }
 
   const stretches: Stretch[] = [];
-  const cellRuns: CellRun[] = [];
-  const quant = (b: BinTotals): number => {
-    const tot = b.billable + b.nonbillable;
-    if (tot <= 0) return 0; // absorbed gap cell: paint as pure carry (green)
-    return Math.round((b.nonbillable / tot) * 10) / 10; // 10% steps
-  };
   for (let b = 0; b < N_BINS; b++) {
     if (!painted[b]) continue;
     const s = stretches[stretches.length - 1];
@@ -200,10 +196,30 @@ function modelFromBins(bins: BinTotals[]): DayModel {
     } else {
       stretches.push({ from: b, to: b + 1, billableSec: bins[b]!.billable, nonbillableSec: bins[b]!.nonbillable });
     }
-    const g = quant(bins[b]!);
-    const c = cellRuns[cellRuns.length - 1];
-    if (c && c.to === b && c.grayFrac === g) c.to = b + 1;
-    else cellRuns.push({ from: b, to: b + 1, grayFrac: g });
+  }
+
+  // Largest-remainder coloring per stretch: each category banks its real
+  // seconds bin by bin; every cell is paid out whole to the fuller bank. Solid
+  // stretches stay solid, a real slate stretch paints contiguously (its bins
+  // fill the slate bank exactly there), and scattered minority time coalesces
+  // into whole cells instead of disappearing (old dominance rule) or smearing
+  // into ragged per-cell bands (proportional rule).
+  const cellRuns: CellRun[] = [];
+  const pushCell = (b: number, cat: 'billable' | 'nonbillable') => {
+    const last = cellRuns[cellRuns.length - 1];
+    if (last && last.to === b && last.cat === cat) last.to = b + 1;
+    else cellRuns.push({ from: b, to: b + 1, cat });
+  };
+  for (const s of stretches) {
+    const bank = { billable: 0, nonbillable: 0 };
+    for (let b = s.from; b < s.to; b++) {
+      bank.billable += bins[b]!.billable;
+      bank.nonbillable += bins[b]!.nonbillable;
+      const cellSec = Math.max(bins[b]!.billable + bins[b]!.nonbillable, BIN_MIN * 60);
+      const cat: 'billable' | 'nonbillable' = bank.nonbillable > bank.billable ? 'nonbillable' : 'billable';
+      bank[cat] -= cellSec; // may dip negative briefly; self-corrects over the stretch
+      pushCell(b, cat);
+    }
   }
   return { cellRuns, stretches };
 }
@@ -224,7 +240,7 @@ function prepareCells(cellRuns: CellRun[]): PreparedStripCell[] {
   return cellRuns.map((c) => ({
     leftPct: pctOfDay(c.from),
     widthPct: pctOfDay(c.to - c.from),
-    grayFrac: c.grayFrac,
+    color: COLOR[c.cat],
   }));
 }
 
@@ -322,7 +338,7 @@ export function WorkdayColumns({
       cells: model.cellRuns.map((c) => ({
         topPct: pctOfDay(c.from),
         heightPct: pctOfDay(c.to - c.from),
-        grayFrac: c.grayFrac,
+        color: COLOR[c.cat],
       })),
     };
   });

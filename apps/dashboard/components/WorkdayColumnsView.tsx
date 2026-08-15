@@ -9,9 +9,8 @@ export interface PreparedDay {
   label: string;
   sublabel?: string;
   workedLabel: string; // e.g. "9.40h"
-  /** Painted cell-runs: green with a slate band (right side) sized to the
-   *  non-billable share, so column gray mass matches the day's Non-billable. */
-  cells: Array<{ topPct: number; heightPct: number; grayFrac: number }>;
+  /** Painted cell-runs: solid one-color bar pieces. */
+  cells: Array<{ topPct: number; heightPct: number; color: string }>;
 }
 export interface PreparedTick {
   label: string;
@@ -158,22 +157,9 @@ export function WorkdayColumnsView({
                         height: `${s.heightPct}%`,
                         left: 0,
                         right: 0,
-                        background: '#1f8a4c',
+                        background: s.color,
                       }}
-                    >
-                      {s.grayFrac > 0 && (
-                        <span
-                          style={{
-                            position: 'absolute',
-                            top: 0,
-                            bottom: 0,
-                            right: 0,
-                            width: `${Math.round(s.grayFrac * 100)}%`,
-                            background: '#566573',
-                          }}
-                        />
-                      )}
-                    </span>
+                    />
                   ))}
                 </div>
                 <div
