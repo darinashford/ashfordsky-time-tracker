@@ -30,7 +30,11 @@ export default (PUBLIC ? passthrough : CONFIGURED ? protect : blocked);
 
 export const config = {
   // Protect every route except the auth endpoints, the token-authed ingest API,
-  // and static assets. /api/ingest authenticates with a per-person Bearer token,
-  // not the M365 session, so it must bypass the login wall.
-  matcher: ['/((?!api/auth|api/ingest|_next/static|_next/image|favicon.ico).*)'],
+  // static assets, and the Railway liveness probe. /api/ingest authenticates
+  // with a per-person Bearer token, not the M365 session. /api/health returns a
+  // constant {ok:true} with zero data — if the login wall 307s it, Railway's
+  // healthcheck never sees a 200, every deploy is marked FAILED, and the new
+  // container is never switched in (exactly what broke the first healthcheck
+  // rollout).
+  matcher: ['/((?!api/auth|api/ingest|api/health|_next/static|_next/image|favicon.ico).*)'],
 };
