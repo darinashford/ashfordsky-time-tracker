@@ -19,8 +19,8 @@ import { WorkdayColumnsView, type PreparedDay, type PreparedTick } from './Workd
  * email showed almost no slate); plain per-cell proportional bands were
  * mass-accurate but rendered as ragged caps.
  * Worked = sensor-active OR grace-promoted (afk_promoted — migration 0015).
- * Clicking any stretch — worked or away — shows a bubble with its duration,
- * split into billable / non-billable for worked stretches.
+ * Clicking any single-color bar — or an Away gap — shows a bubble with that
+ * segment's own duration, category, and time range.
  *
  * `DayStrip` (via buildDayModel) is the horizontal single-day bar (Today).
  * `WorkdayColumns` is the multi-day Reporting version: one vertical bar per day.
@@ -227,15 +227,6 @@ function modelFromBins(bins: BinTotals[]): DayModel {
 const binToMin = (bin: number) => DAY_START_MIN + bin * BIN_MIN;
 const pctOfDay = (bin: number) => (bin / N_BINS) * 100;
 
-/** Bubble copy for a worked stretch: total, then the split when it's mixed. */
-function stretchLabels(s: Stretch): { durLabel: string; catLabel: string } {
-  const total = s.billableSec + s.nonbillableSec;
-  const durLabel = fmtDur(total);
-  if (s.nonbillableSec < 30) return { durLabel, catLabel: 'Billable' };
-  if (s.billableSec < 30) return { durLabel, catLabel: 'Non-billable / unattributed' };
-  return { durLabel, catLabel: `${fmtDur(s.billableSec)} billable · ${fmtDur(s.nonbillableSec)} non-billable` };
-}
-
 function prepareCells(cellRuns: CellRun[]): PreparedStripCell[] {
   return cellRuns.map((c) => ({
     leftPct: pctOfDay(c.from),
@@ -244,10 +235,13 @@ function prepareCells(cellRuns: CellRun[]): PreparedStripCell[] {
   }));
 }
 
-/** Click overlays: one per worked stretch (with the billable/non-billable split
- *  in the bubble) and one Away ghost per gap BETWEEN stretches. All transparent —
- *  the cells underneath are the paint. */
-function prepareOverlays(stretches: Stretch[]): PreparedStripSegment[] {
+/** Click overlays: one per SAME-COLOR bar (clicking a green bar shows just that
+ *  billable segment, a slate bar just that non-billable segment) and one Away
+ *  ghost per gap BETWEEN worked stretches. All transparent — the cells
+ *  underneath are the paint. Durations quote the bar as drawn (bins × 5 min):
+ *  bars are whole-cell largest-remainder payouts, so that IS the honest length
+ *  of what the eye sees, and per stretch the bars sum back to the cards. */
+function prepareOverlays(model: DayModel): PreparedStripSegment[] {
   const out: PreparedStripSegment[] = [];
   const pushAway = (from: number, to: number) => {
     if (to <= from) return;
@@ -261,17 +255,18 @@ function prepareOverlays(stretches: Stretch[]): PreparedStripSegment[] {
     });
   };
   let cursor: number | null = null;
-  for (const s of stretches) {
+  for (const s of model.stretches) {
     if (cursor != null) pushAway(cursor, s.from);
-    const { durLabel, catLabel } = stretchLabels(s);
-    out.push({
-      leftPct: pctOfDay(s.from),
-      widthPct: pctOfDay(s.to - s.from),
-      durLabel,
-      catLabel,
-      rangeLabel: `${fmtMin(binToMin(s.from))}–${fmtMin(binToMin(s.to))}`,
-    });
     cursor = s.to;
+  }
+  for (const c of model.cellRuns) {
+    out.push({
+      leftPct: pctOfDay(c.from),
+      widthPct: pctOfDay(c.to - c.from),
+      durLabel: fmtDur((c.to - c.from) * BIN_MIN * 60),
+      catLabel: c.cat === 'billable' ? 'Billable' : 'Non-billable / unattributed',
+      rangeLabel: `${fmtMin(binToMin(c.from))}–${fmtMin(binToMin(c.to))}`,
+    });
   }
   return out;
 }
@@ -289,7 +284,7 @@ export function DayStrip({ model, label }: { model: DayModel; label?: string }) 
   return (
     <DayStripView
       cells={prepareCells(model.cellRuns)}
-      segments={prepareOverlays(model.stretches)}
+      segments={prepareOverlays(model)}
       ticks={prepareTicks(60)}
       label={label}
     />
@@ -302,7 +297,7 @@ export function DayStripBinned({ bins, label }: { bins: BinnedInput[]; label?: s
   return (
     <DayStripView
       cells={prepareCells(model.cellRuns)}
-      segments={prepareOverlays(model.stretches)}
+      segments={prepareOverlays(model)}
       ticks={prepareTicks(60)}
       label={label}
     />

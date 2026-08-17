@@ -63,9 +63,15 @@ const NEIGHBOR_TTL_SECONDS = 1800;
 // with the dashboard's idle breakdown so both agree on what counts as away.
 
 /**
- * Seconds in each AFK interval's contiguous idle stretch (back-to-back AFK
- * intervals within 2 min), so a long stretch away can be told from short pauses.
+ * Each AFK interval's contiguous idle stretch: total seconds (so a long stretch
+ * away can be told from short pauses) and whether sensor-active work brackets
+ * the stretch (so a short pause mid-work can be told from an isolated machine
+ * self-wake with nothing worked around it).
  */
+interface IdleRun {
+  total: number;
+  anchored: boolean;
+}
 /** Resolution → the day-row shape the runner tracks (for the call-run pass). */
 function asDayRow(r: Resolution): DayResolutionRow {
   return {
@@ -80,8 +86,8 @@ function asDayRow(r: Resolution): DayResolutionRow {
   };
 }
 
-function computeIdleRuns(intervals: Interval[]): Map<string, number> {
-  const out = new Map<string, number>();
+function computeIdleRuns(intervals: Interval[]): Map<string, IdleRun> {
+  const out = new Map<string, IdleRun>();
   for (let i = 0; i < intervals.length; ) {
     if (!intervals[i]!.isAfk) {
       i++;
@@ -102,7 +108,31 @@ function computeIdleRuns(intervals: Interval[]): Map<string, number> {
       ids.push(intervals[j]!.id);
       j++;
     }
-    for (const id of ids) out.set(id, total);
+    // A sub-grace pause only reads as "still working" when work actually
+    // surrounds it: sensor-active time within the bridge gap on BOTH sides.
+    // Without this, a machine that wakes itself (hourly maintenance, "New
+    // notification", the lock screen repainting) logs an isolated 5-min AFK
+    // blob in the middle of the night and the grace promotes it to worked —
+    // Keith's day looked like 19 slivers of lock-screen "work".
+    const runStart = Date.parse(intervals[i]!.startTs);
+    let activeBefore = false;
+    for (let k = i - 1; k >= 0; k--) {
+      if (!intervals[k]!.isAfk) {
+        activeBefore = runStart - Date.parse(intervals[k]!.endTs) <= 300_000;
+        break;
+      }
+      if (runStart - Date.parse(intervals[k]!.endTs) > 300_000) break;
+    }
+    let activeAfter = false;
+    for (let k = j; k < intervals.length; k++) {
+      if (!intervals[k]!.isAfk) {
+        activeAfter = Date.parse(intervals[k]!.startTs) - lastEnd <= 300_000;
+        break;
+      }
+      if (Date.parse(intervals[k]!.startTs) - lastEnd > 300_000) break;
+    }
+    const run: IdleRun = { total, anchored: activeBefore && activeAfter };
+    for (const id of ids) out.set(id, run);
     i = j;
   }
   return out;
@@ -220,15 +250,20 @@ async function main(): Promise<void> {
       const idleRuns = computeIdleRuns(intervals);
 
       for (const iv of intervals) {
-        // A short no-input stretch (< idle grace, default 10 min) is a pause at
-        // the desk — reading, thinking, listening on a call — not real idle.
-        // ActivityWatch flags AFK after ~3 min, which is too eager; here we hand
-        // such a block back to the normal active path so it counts and inherits
-        // the surrounding client (carry-forward). Only genuinely long idle
-        // (>= grace) takes the away/call idle branch below.
-        if (iv.isAfk && (idleRuns.get(iv.id) ?? iv.durationSeconds) < cfg.idleGraceSeconds) {
-          iv.isAfk = false;
-          promotedIds.push(iv.id);
+        // A short no-input stretch (< idle grace, default 10 min) BETWEEN two
+        // stretches of real work is a pause at the desk — reading, thinking,
+        // listening on a call — not real idle. ActivityWatch flags AFK after
+        // ~3 min, which is too eager; here we hand such a block back to the
+        // normal active path so it counts and inherits the surrounding client
+        // (carry-forward). The run must be anchored (sensor-active work on both
+        // sides): an unanchored short blob is the machine waking itself, not a
+        // person pausing. Long idle (>= grace) takes the away/call branch below.
+        if (iv.isAfk) {
+          const run = idleRuns.get(iv.id);
+          if (run && run.anchored && run.total < cfg.idleGraceSeconds) {
+            iv.isAfk = false;
+            promotedIds.push(iv.id);
+          }
         }
         if (iv.isAfk) {
           // Idle = a no-input stretch >= the idle grace. Recover the billable part
@@ -275,7 +310,7 @@ async function main(): Promise<void> {
           // sleeping machine cannot be on a call. A genuine call that outruns its
           // logged end still survives via the call-run pass on its ACTIVE blocks.
           const inMeeting = idleRes.resolverType === 'calendar_event';
-          if (!inMeeting && (idleRuns.get(iv.id) ?? iv.durationSeconds) > cfg.awayCutoffSeconds) {
+          if (!inMeeting && (idleRuns.get(iv.id)?.total ?? iv.durationSeconds) > cfg.awayCutoffSeconds) {
             await clearIfResolved(iv.id);
             continue;
           }

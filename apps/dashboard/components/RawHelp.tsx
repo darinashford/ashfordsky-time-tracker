@@ -228,6 +228,9 @@ export function HowItWorks({
         <li>
           <strong>Under {idleMin} minutes</strong> with no input is just a pause at the desk — reading,
           thinking, a quick interruption. It counts as working and is attributed like the block around it.
+          This only applies to a pause <em>between</em> stretches of real work: a machine that wakes itself
+          overnight (Windows maintenance, a notification lighting up the lock screen) with nothing worked
+          around it stays Away, no matter how short the blip.
         </li>
         <li>
           <strong>{idleMin}+ minutes</strong> with no input does <em>not</em> count as working. It is not
@@ -252,8 +255,8 @@ export function HowItWorks({
         interruption: a recording gap under the grace is bridged and counts as continuing work. There is no
         “idle” status: past the grace you are simply <strong>Away / off</strong>, the light-gray track on the
         Workday strip. An Away stretch is therefore always at least {'15'} minutes — anything shorter reads as
-        part of the surrounding work. Click any stretch of the strip — worked or away — for a bubble with its
-        exact duration. Off-computer time can still be added by hand — see below.
+        part of the surrounding work. Click any bar of the strip — a green billable segment, a slate
+        non-billable one, or an away gap — for a bubble with that segment’s duration and time range. Off-computer time can still be added by hand — see below.
       </p>
       <p className="small">
         A call is tied to a client by <strong>who was on it</strong> — the calendar / Krisp attendees — so a
